@@ -94,7 +94,7 @@ sub cleanup{
 $SIG{'INT'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.6.20130906';
+$main::VERSION = '1.7.20130929';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -656,7 +656,6 @@ __END__
 
 =head1 NAME
 
-shrink_bib shrinks info in bibtex files. 
 wolf (=work on latex file) provides a simple LaTeX IDE.
 
 =head1 DESCRIPTION
