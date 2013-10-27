@@ -1,9 +1,5 @@
 #!/usr/bin/perl
 # author: seth
-# e-mail: for e-mail-address see http://www.wg-karlsruhe.de/seth/email_address.php
-# description: similar to latexmk, this tool compiles a latex file to pdf and opens it in 
-#   a pdf viewer. additionally the lates file is opened in a text editor.
-#
 # tab-size: 2
 
 use strict;
@@ -43,7 +39,7 @@ use Tie::IxHash;   # ordered hashes
 #		load a pdf viewer, returns the name of the pdf viewer and a status code
 #
 # sub load_latex_editor
-# 	load gvim
+# 	load gvim or other latex editor
 #
 # sub extract_bibfiles
 # 	extract bibfiles from latex file, and append extensions '.bib'
@@ -94,7 +90,7 @@ sub cleanup{
 $SIG{'INT'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.7.20130929';
+$main::VERSION = '1.9.20131027';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -195,16 +191,18 @@ sub load_pdf_viewer{
 }
 
 sub load_latex_editor{
-	my $file          = shift;
+	my $files         = shift;
 	my $latex_editors = shift;
 	my $verbose       = shift;
 	print "search for latex editor\n" if $verbose>1;
 	my $latex_editor = get_first_found_exe([split /\|/, $latex_editors], $verbose);
-	my $pids = get_pids(qr/\Q$latex_editor\E .*\Q$file\E\b$/);
+	my $pids = get_pids(qr/\Q$latex_editor\E .*\Q$files->[0]\E\b/);
 	# load if not loaded already
 	if(@$pids==0){
 		print "loading latex editor '$latex_editor'\n" if $verbose>0;
-		system($latex_editor.' '.$file.' &'); 
+		my $latex_editor_cmd = $latex_editor;
+		$latex_editor_cmd .= ' -p' if $latex_editor =~ /^g?vim\z/;
+		system($latex_editor_cmd.' '.(join ' ', @$files).' &'); 
 	}else{
 		print "latex editor '$latex_editor' loaded already\n" if $verbose>0;
 	}
@@ -240,6 +238,7 @@ sub extract_usedfiles{ # from latex file
 	my $file_prefix = shift;
 	my $usedfiles   = shift;
 	my $method      = shift // 'flsfile';
+	my $errors = [];
 	if($method eq 'flsfile'){
 		@$usedfiles = slurp($file_prefix.'.fls');
 		my $path = shift @$usedfiles;
@@ -253,15 +252,9 @@ sub extract_usedfiles{ # from latex file
 	}elsif($method eq 'logfile'){ # method till 2013-08-16: faulty because not all files were matched
 		@$usedfiles = slurp($file_prefix.'.log') =~m/^(?:\)+ )?\(\K[.\/][^ \s)]+|^\s*File: \K[.\/][^ \s]+/gm;
 	}elsif('texfile'){ # very old method till 2012: faulty because not all files were matched
-		open(my $INFILE, '<', $latexfile) or die "error reading file '$latexfile'. $!\n";
+		if(open(my $INFILE, '<', $latexfile)){
 			while(my $line = <$INFILE>){
-				while($line =~/\\(?:input|include)\s*(?:\[[^\]]+\]\s*)?\{(.*?)\}/g){
-					unless($1.'.tex' ~~ $usedfiles){
-						push @$usedfiles, $1.'.tex';
-						extract_usedfiles($usedfiles->[-1], undef, $usedfiles, 'texfile'); # recursion!
-					}
-				}
-				while($line =~/\\includegraphics\s*(?:\[[^\]]+\]\s*)?\{(.*?)\}/g){
+				while($line =~/\\in(?:clude(?:graphics)?|put)\s*(?:\[[^\]]+\]\s*)?\{(.*?)\}/g){
 					my $filename = 
 						-e $1.'.tex' ? $1.'.tex' :
 						-e $1.'.eps' ? $1.'.eps' :
@@ -270,21 +263,25 @@ sub extract_usedfiles{ # from latex file
 						-e $1.'.png' ? $1.'.png' : $1;
 					unless($filename ~~ $usedfiles){
 						push @$usedfiles, $filename;
-						extract_usedfiles($usedfiles->[-1], undef, $usedfiles, 'texfile'); # recursion!
+						push @$errors, @{extract_usedfiles($usedfiles->[-1], undef, $usedfiles, 'texfile')}; # recursion!
 					}
 				}
 			}
-		close($INFILE);
+			close($INFILE);
+		}else{
+			push @$errors, "error reading file '$latexfile'. $!";
+			#print "$errors->[-1]\n";
+		}
 	}
-	return 1;
+	return $errors;
 }
 
 sub print_tex_log_messages{
 	my $type = shift;
 	my $msgs = shift;
 	if(keys %$msgs>0){
-		print "\n$type:\n";
-		print '='x(1+length($type))."\n";
+		print "\n$type\n";
+		print '='x(length($type))."\n";
 		map {print $_.' ('.$$msgs{$_}."x)\n\n"} keys %$msgs;
 	}else{
 		#print "\nno $type\n";
@@ -292,27 +289,40 @@ sub print_tex_log_messages{
 }
 
 sub interprate_error{
-	my $type  = shift; # ltx_..., bib_...
-	my $error = shift;
+	my $orig_ltx  = shift;
+	my $tmp_ltx_f = shift;
+	my $type      = shift; # ltx_..., bib_...
+	my $error     = shift;
 	my $could_interprate_error = 0;
 	my $interpretation;
 	if($type =~ /^ltx_/){
-		if($error=~/^! Undefined control sequence.\nl.(\d+) (\\.+)/){
+		my $err_re = qr/(?:!|[^:\n]+\.[^:\n]+:[0-9]+:)/;
+		if($error=~/^! Undefined control sequence\.\nl.(\d+) (?:\.\.\..*)(\\\S+)/){
 			$could_interprate_error = 1;
-			$interpretation = "command '$2' in line $1 is unknown. maybe the command is mispelled or you didn't load the right package.";
+			$interpretation = "command '$2' in line $1 is unknown. maybe the command is misspelled or you didn't load the right package.";
+		}elsif($error=~/^([^:\n]+\.[^:\n]+):([0-9]+): Undefined control sequence\.\n.*?\.\.\..*(\\\S+)/){
+			$could_interprate_error = 1;
+			my $filename = $1;
+			my $line = $2;
+			my $command = $3;
+			$filename = $orig_ltx if $filename =~/\Q$tmp_ltx_f\E$/;
+			$interpretation = "command '$command' in line $line of file '$filename' is unknown.\nmaybe the command is misspelled or you didn't load the right package.";
 		}
-		if($error=~/^! Missing \$ inserted.\s+(?:.*\s+){1,3}l.(\d+)/ or 
+		if($error=~/^$err_re Missing \$ inserted.\s+(?:.*\s+){1,3}l.(\d+)/ or 
 			$error=~/^! Extra \}, or forgotten \$.\s+.*\s+l.(\d+)/){
 			$could_interprate_error = 1;
 			$interpretation = "probably you forgot a dollar-sign (\$) somewhere around line $1.";
 		}
-		if($error=~/^! Argument of \\\@\Ecaption has an extra }.\E.*\s+\\par/s){
+		if($error=~/^$err_re Argument of \\\@\Ecaption has an extra }.\E.*\s+\\par/s){
 			$could_interprate_error = 1;
 			$interpretation = "maybe you should use '\\newline' instead of '\\\\'.";
 		}
 	}elsif($type =~ /^bib_/){
 	}
-	print "wolf hint: $interpretation\n" if $could_interprate_error;
+	if($could_interprate_error){
+		print "\nwolf hint: ".(join ' 'x11, split /(\n)/, $interpretation)."\n";
+		#print "wolf hint: $interpretation\n";
+	}
 	return $could_interprate_error;
 }
 
@@ -322,8 +332,11 @@ sub ordered_hash_ref{
 }
 
 sub parse_tex_log{
+	my $orig_ltx    = shift;
+	my $tmp_ltx_f   = shift;
 	my $tmp_ltx_log = shift;
 	my $tmp_bib_log = shift;
+	my $extract_errors = shift;
 	my $verbose = shift;
 	my $log = slurp($tmp_ltx_log);
 	my $compile_mode = 0;
@@ -401,15 +414,18 @@ sub parse_tex_log{
 		# warnings
 		$msg = $msgs{'ltx_warnings'}; # `grep -iA 1 warning $tmp_ltx_log`;
 		while($log=~/^(?:Package ([a-zA-Z0-9_-]+) [wW]arning.*(?:\(\1\).*+[\n\r]*)*|.*(?i:warning).*+[\n\r]*.*)/mgp){
+			my $package = $1;
 			next if ${^MATCH} =~/Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
 			my $w = ${^MATCH};
 			$w =~s/\n\n(?:Package .*|[\s()]*$)//s;
 			# maybe warnings continues on next line(s)
-			while($log=~/\G(?:\n .+)+/mgcp # and $w =~/^Package subfig Warning:/
-				){ # space on next line indicates that the warning continues on next line
+			# space or paranthesis on next line indicate that the warning continues on next line
+			if($log=~/\G(?:\n\x20.+)+/mgcp){ # and $w =~/^Package subfig Warning:/
 				$w .= join ' ', split / *\n */, ${^MATCH};
+			}elsif($log=~/\G(?:\n\($package\).+)+/mgcp){
+				$w .= ${^MATCH};
 			}
-			while(substr($w, -1) eq ','){ # comma indicates that the warning continues on next line
+			while($w =~ /[,:]\s*$/){ # comma and colon indicate that the warning continues on next line
 				$log=~/\G\n.*$/mgp;
 				$w .= ${^MATCH};
 			}
@@ -420,23 +436,31 @@ sub parse_tex_log{
 		$msg = $msgs{'ltx_errs'}; # `grep -iA 2 -B 1 -E "^!" $tmp_ltx_log`.`grep -iA 1 -B 1 error $tmp_ltx_log`;
 		while($log=~/^(?:
 				Package\s([a-zA-Z0-9_-]+)\s[eE]rror.*(?:\(\1\).*+\s*)*| # package errors
-				!(?:.*\s+){1,3}l\.\d+(?-s:.*)| # normal errors indicating a line
-				!(?:.*\s+){2}.*|       # normal errors
-				.*error.*+\s*.*        # other errors
+				!(?:.*\s+){1,3}l\.\d+(?-s:.*)|              # normal errors indicating a line
+				!(?:.*\s+){2}.*|                            # normal errors
+				[^:\n]+\.[^:\n]+:[0-9]+:\x20(?:.+\n){1,3}|  # file:line: errors
+				.*error.*+\s*.*                             # other errors
 			)/mgxp){
-			next if ${^MATCH} =~/Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
-			++$msg->{'occs'}->{${^MATCH}};
+			my $err = ${^MATCH};
+			$err =~ s/[\n\r]+$//;
+			next if $err =~/Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
+			next if $err =~/file:line:error style messages enabled/;
+			++$msg->{'occs'}->{$err};
 		}
 		print_tex_log_messages($msg->{'caption'}, $msg->{'occs'});
 		print "\nsummary of summary\n";
 		print "==================\n";
+		if(@$extract_errors > 0){
+			print "\nfile reading errors:\n";
+			map {print " $_\n"} @$extract_errors;
+		}
 		for my $m(reverse keys %msgs){
 			if(keys(%{$msgs{$m}->{'occs'}})>0){
 				my $first_occ_message = "first of $msgs{$m}->{'caption'}";
 				print "\n$first_occ_message\n";
 				print '=' x length($first_occ_message);
 				print "\n".(keys(%{$msgs{$m}->{'occs'}}))[0]."\n";
-				interprate_error($m, (keys(%{$msgs{$m}->{'occs'}}))[0]);
+				interprate_error($orig_ltx, $tmp_ltx_f, $m, (keys(%{$msgs{$m}->{'occs'}}))[0]);
 				print "\n";
 			}
 		}
@@ -552,15 +576,15 @@ sub latex_compile{
 	my $tmp_ltx_pdf = $tmp_ltx.'.pdf'; # this will be the result and will be copied 
 	#                                    over $params->{'latexfile'}.'.pdf'
 	push @unlink_files, $tmp_ltx.$_ for ('.tex', '.log', '.pdf', '.aux', '.bbl', 
-		'.blg', '-blx.bib', '.brf', '.fls', '.loa', '.lof', '.lot', '.run.xml', '.toc', 
-		'.out');
+		'.blg', '-blx.bib', '.brf', '.fls', '.loa', '.lof', '.lot', '.nav', '.run.xml', 
+		'.snm', '.toc', '.out');
 	push @unlink_files, filename2temp($_) for @$orig_btx;
 	my $compile_mode = 0; # 0 = do nothing; 1 = compile latex (without bibtex); 
 	#                       2 = compile bibtex and latex
 	my $cmdlatex = 'pdflatex';
 	my $compiling_counter = 0;
 	# maybe better set -file-line-error ?
-	my $complete_latex_command = "$cmdlatex -recorder -shell-escape -interaction=nonstopmode --halt-on-error $tmp_ltx_f";
+	my $complete_latex_command = "$cmdlatex -recorder -file-line-error -shell-escape -interaction=nonstopmode --halt-on-error $tmp_ltx_f";
 	my $last_change_time_bak = 0;
 	while(1){
 		my $last_change_time = newest_change($other_files);
@@ -605,9 +629,9 @@ sub latex_compile{
 		}
 		$other_files = [];
 		# get filenames of files that are used
-		extract_usedfiles($orig_ltx, $tmp_ltx, $other_files, 'flsfile');
+		my $extract_errors = extract_usedfiles($orig_ltx, $tmp_ltx, $other_files, 'flsfile');
 		$last_change_time_bak = newest_change($other_files);
-		$compile_mode = parse_tex_log($tmp_ltx_log, $tmp_bib_log, $params->{'verbose'});
+		$compile_mode = parse_tex_log($orig_ltx, $tmp_ltx_f, $tmp_ltx_log, $tmp_bib_log, $extract_errors, $params->{'verbose'});
 		if(++$compiling_counter>2 and $compile_mode>0){
 			print "wolf notice: halt loop for there seem to persist errors/warnings.\n";
 			$compile_mode = 0;
@@ -639,9 +663,21 @@ my ($pdfviewer, $status_pdfviewer) = load_pdf_viewer(
 if($status_pdfviewer==0 and $params->{'verbose'}>0){
 	print "wolf warning: couldn't load pdf viewer '$pdfviewer'\n";
 }
+# check missing files
+my $used_latex_files = [$params->{'latexfile'}.'.tex'];
+my $extract_errors = extract_usedfiles($params->{'latexfile'}.'.tex', undef, $used_latex_files, 'texfile');
+if(@$extract_errors > 0 and $params->{'verbose'}>0){
+	my $tex_content = slurp $params->{'latexfile'}.'.tex';
+	unless($tex_content =~/\\graphicspath/){
+		print "\nwarning: following files could not be found by wolf (but they may be found by pdflatex though):\n";
+		map {print " $_\n"} @$extract_errors;
+		print "please press <enter> to continue.\n";
+		my $dummy = <STDIN>;
+	}
+}
 # text editor
 my $latex_editor = load_latex_editor(
-	$params->{'latexfile'}.'.tex', 
+	[grep {m/\.tex\z/} @$used_latex_files], 
 	$params->{'editors'}, 
 	$params->{'verbose'}
 );
@@ -660,8 +696,8 @@ wolf (=work on latex file) provides a simple LaTeX IDE.
 
 =head1 DESCRIPTION
 
-this program compiles a latex file to pdf using 'pdflatex' and 'bibtex'
-everytime the latex file or bibtex file or included graphic files change. 
+similar to latexmk, this program compiles a latex file to pdf using 'pdflatex' and 
+'bibtex' everytime the latex file or bibtex file or included files change.
 Additionally this tool opens your favourite latex editor and your favourite 
 viewer automatically.
 At the end of compiling a summary of all errors and warnings is printed.
