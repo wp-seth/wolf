@@ -90,7 +90,7 @@ sub cleanup{
 $SIG{'INT'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.9.20131027';
+$main::VERSION = '1.10.20131028';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -100,7 +100,7 @@ sub syntaxCheck{
 		'version'    => 0,                             # diplay version and exit
 	);
 	GetOptions(\%params,
-		"pdfviewer=s" => sub { $params{'pdfviewers'} = $_[1].'|'.$params{'pdfviewers'};},
+		"pdfviewer|pdf-viewer=s" => sub { $params{'pdfviewers'} = $_[1].'|'.$params{'pdfviewers'};},
 		"editor=s" => sub { $params{'editors'} = $_[1].'|'.$params{'editors'};},
 		"silent|quiet|q" => sub { $params{'verbose'} = 0;},
 		"very-verbose" => sub { $params{'verbose'} = 2;},
@@ -194,8 +194,12 @@ sub load_latex_editor{
 	my $files         = shift;
 	my $latex_editors = shift;
 	my $verbose       = shift;
+	my $latex_editors = [split /\|/, $latex_editors];
+	if(not defined $latex_editors or @$latex_editors==0 or $latex_editors->[0] eq 'none'){
+		return undef;
+	}
 	print "search for latex editor\n" if $verbose>1;
-	my $latex_editor = get_first_found_exe([split /\|/, $latex_editors], $verbose);
+	my $latex_editor = get_first_found_exe($latex_editors, $verbose);
 	my $pids = get_pids(qr/\Q$latex_editor\E .*\Q$files->[0]\E\b/);
 	# load if not loaded already
 	if(@$pids==0){
@@ -546,7 +550,7 @@ sub check_for_pdf_annotations{
 	my $verbose   = shift;
 	my ($exist_anno_file, $exist_anno, $infostring) = get_pdf_viewer_annotations($pdf_file, $verbose);
 	if($exist_anno_file){
-		if($verbose>0){
+		if($verbose>0 and defined $pdfviewer){
 			print "else\n====\n";
 			print "your pdfviewer: $pdfviewer\n";
 		}
@@ -639,7 +643,7 @@ sub latex_compile{
 		if(compare($tmp_ltx_pdf, $pdf_file)){
 			check_for_pdf_annotations($pdfviewer, $pdf_file, $params->{'verbose'});
 			#sleep 2 if $pdfviewer eq 'okular';
-			sleep 2 if $pdfviewer=~/^(?:okular|evince)$/; # otherwise copying could be started before reloading of pdf is finished, I guess
+			sleep 2 if defined $pdfviewer and $pdfviewer=~/^(?:okular|evince)$/; # otherwise copying could be started before reloading of pdf is finished, I guess
 			copyfile($tmp_ltx_pdf, $pdf_file);
 		}
 		print ''.localtime()."\n" if $params->{'verbose'}>0;
@@ -739,10 +743,14 @@ wolf mydoc
 pdf viewer that shall be used. default: I<string> = choose automatically from one 
 of "kpdf|evince|okular|acroread" whatever is found first.
 
+if I<string> is 'none', then no pdf viewer will be loaded.
+
 =item B<--editor>=I<string>
 
 latex editor that shall be used. default: I<string> = choose automatically from 
 one of "gvim|kile" whatever is found first.
+
+if I<string> is 'none', then no editor will be loaded.
 
 =item B<--version>, B<-V>
 
