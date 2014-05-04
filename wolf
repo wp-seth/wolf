@@ -4,6 +4,7 @@
 
 use strict;
 use warnings;
+
 use Data::Dumper;  # Dumper
 use Date::Format;  # time2str
 use File::Compare; # compare
@@ -88,9 +89,11 @@ sub cleanup{
 }
 
 $SIG{'INT'} = \&cleanup;
+$SIG{'TERM'} = \&cleanup;
+$SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.10.20131028';
+$main::VERSION = '1.12.20140305';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -192,10 +195,10 @@ sub load_pdf_viewer{
 
 sub load_latex_editor{
 	my $files         = shift;
-	my $latex_editors = shift;
+	my $latex_editors_string = shift;
 	my $verbose       = shift;
-	my $latex_editors = [split /\|/, $latex_editors];
-	if(not defined $latex_editors or @$latex_editors==0 or $latex_editors->[0] eq 'none'){
+	my $latex_editors = [split /\|/, $latex_editors_string];
+	if(not defined $latex_editors_string or @$latex_editors==0 or $latex_editors->[0] eq 'none'){
 		return undef;
 	}
 	print "search for latex editor\n" if $verbose>1;
@@ -426,7 +429,7 @@ sub parse_tex_log{
 			# space or paranthesis on next line indicate that the warning continues on next line
 			if($log=~/\G(?:\n\x20.+)+/mgcp){ # and $w =~/^Package subfig Warning:/
 				$w .= join ' ', split / *\n */, ${^MATCH};
-			}elsif($log=~/\G(?:\n\($package\).+)+/mgcp){
+			}elsif(defined $package and $log=~/\G(?:\n\($package\).+)+/mgcp){
 				$w .= ${^MATCH};
 			}
 			while($w =~ /[,:]\s*$/){ # comma and colon indicate that the warning continues on next line
@@ -580,7 +583,7 @@ sub latex_compile{
 	my $tmp_ltx_pdf = $tmp_ltx.'.pdf'; # this will be the result and will be copied 
 	#                                    over $params->{'latexfile'}.'.pdf'
 	push @unlink_files, $tmp_ltx.$_ for ('.tex', '.log', '.pdf', '.aux', '.bbl', 
-		'.blg', '-blx.bib', '.brf', '.fls', '.loa', '.lof', '.lot', '.nav', '.run.xml', 
+		'.blg', '-blx.bib', '.brf', '.fls', '.loa', '.lof', '.lot', '.nav', '.nlo', '.run.xml', 
 		'.snm', '.toc', '.out');
 	push @unlink_files, filename2temp($_) for @$orig_btx;
 	my $compile_mode = 0; # 0 = do nothing; 1 = compile latex (without bibtex); 
@@ -786,11 +789,31 @@ same as B<--verbose=1>.
 
 =head1 LICENCE
 
-this program is distributed in the hope that it will be useful,
-but without any warranty; without even the implied warranty of
-merchantability or fitness for a particular purpose.
+Copyright (c) 2014, seth
+All rights reserved.
 
-originally written by seth (for e-mail-address see
-<http://www.wg-karlsruhe.de/seth/email_address.php>).
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+originally written by seth (see https://github.com/wp-seth/wolf)
 
 =cut
+

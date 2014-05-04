@@ -4,8 +4,8 @@ wolf (=work on latex file) provides a simple LaTeX IDE.
 
 =head1 DESCRIPTION
 
-this program compiles a latex file to pdf using 'pdflatex' and 'bibtex'
-everytime the latex file or bibtex file or included graphic files change. 
+similar to latexmk, this program compiles a latex file to pdf using 'pdflatex' and 
+'bibtex' everytime the latex file or bibtex file or included files change.
 Additionally this tool opens your favourite latex editor and your favourite 
 viewer automatically.
 At the end of compiling a summary of all errors and warnings is printed.
@@ -47,10 +47,14 @@ wolf mydoc
 pdf viewer that shall be used. default: I<string> = choose automatically from one 
 of "kpdf|evince|okular|acroread" whatever is found first.
 
+if I<string> is 'none', then no pdf viewer will be loaded.
+
 =item B<--editor>=I<string>
 
 latex editor that shall be used. default: I<string> = choose automatically from 
 one of "gvim|kile" whatever is found first.
+
+if I<string> is 'none', then no editor will be loaded.
 
 =item B<--version>, B<-V>
 
@@ -86,9 +90,29 @@ same as B<--verbose=1>.
 
 =head1 LICENCE
 
-this program is distributed in the hope that it will be useful,
-but without any warranty; without even the implied warranty of
-merchantability or fitness for a particular purpose.
+Copyright (c) 2014, seth
+All rights reserved.
 
-originally written by seth (for e-mail-address see
-<http://www.wg-karlsruhe.de/seth/email_address.php>).
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+originally written by seth (see https://github.com/wp-seth/wolf)
+
