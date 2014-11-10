@@ -93,7 +93,7 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.12.20140305';
+$main::VERSION = '1.13.20141110';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -616,7 +616,8 @@ sub latex_compile{
 			# create pdf file
 			map {copyfile($_, filename2temp($_))} @$orig_btx;
 			copyfile($orig_ltx, $tmp_ltx_f);
-			my $cmd = "$complete_latex_command && bibtex $tmp_ltx && $complete_latex_command";
+			# after bibtex two times of pdflatex is needed to avoid citation warnings
+			my $cmd = "$complete_latex_command && bibtex $tmp_ltx && $complete_latex_command && $complete_latex_command";
 			($params->{'verbose'}>0) ? system($cmd) : `$cmd`;
 		}elsif($compile_mode & 1
 			|| compare($orig_ltx, $tmp_ltx_f)
