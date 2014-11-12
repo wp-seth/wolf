@@ -93,7 +93,7 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.12.20140305';
+$main::VERSION = '1.13.20141110';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -353,7 +353,8 @@ sub parse_tex_log{
 		pdfTeX\swarning\s\(dest\):\sname\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
 		Package\srerunfilecheck\sWarning:\sFile\s/x;
 	# cases, where bibtex should be used (again)
-	$compile_mode |= 2 if $log=~/LaTeX Warning: Citation .* on page \d+ undefined on input line/;
+	$compile_mode |= 2 if $log=~/(?:LaTeX|Package natbib) Warning: Citation .* on page \d+ undefined on input line/;
+	#$compile_mode |= 2 if $log=~/Package natbib Warning: There were undefined citations/;
 	# cases, where aux-file should be deleted
 	$compile_mode |= 4 if $log=~/
 		!\sPackage\sbabel\sError:\sYou\shaven't\sloaded\sthe\slanguage/x;
@@ -611,12 +612,15 @@ sub latex_compile{
 		if($compile_mode & 2){ # compile and use bibtex
 			# copy orig bibtex files to temp bibtex files
 			# copy orig latex file to temp latex file
-			# compile latex file twice
+			# compile latex file 
 			# use bibtex
 			# create pdf file
 			map {copyfile($_, filename2temp($_))} @$orig_btx;
 			copyfile($orig_ltx, $tmp_ltx_f);
-			my $cmd = "$complete_latex_command && bibtex $tmp_ltx && $complete_latex_command";
+			# after bibtex actually pdflatex has to be called twice to avoid citation 
+			# warnings. but as the log file is searched for undefined Citations, this 
+			# second call should be unnecessary.
+			my $cmd = "$complete_latex_command && bibtex $tmp_ltx && $complete_latex_command"; # && $complete_latex_command
 			($params->{'verbose'}>0) ? system($cmd) : `$cmd`;
 		}elsif($compile_mode & 1
 			|| compare($orig_ltx, $tmp_ltx_f)
@@ -634,8 +638,8 @@ sub latex_compile{
 			sleep 1;
 			next;
 		}
-		$other_files = [];
 		# get filenames of files that are used
+		$other_files = [];
 		my $extract_errors = extract_usedfiles($orig_ltx, $tmp_ltx, $other_files, 'flsfile');
 		$last_change_time_bak = newest_change($other_files);
 		$compile_mode = parse_tex_log($orig_ltx, $tmp_ltx_f, $tmp_ltx_log, $tmp_bib_log, $extract_errors, $params->{'verbose'});
