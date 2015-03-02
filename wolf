@@ -6,21 +6,16 @@ use strict;
 use warnings;
 
 use Data::Dumper;  # Dumper
-use Date::Format;  # time2str
-use File::Compare; # compare
-use File::Copy;    # copy
-use File::Slurp qw/read_dir slurp/;
-use File::Spec;
+use File::Slurp qw/slurp/;
 use Getopt::Long qw(:config bundling);
-use List::MoreUtils qw(uniq);
 use Pod::Usage;
-use Tie::IxHash;   # ordered hashes
 
 # todo:
-# * cope with changed \bibliography inside of tex-files (extract bibfiles in loop; check tex-files for \cite-changes)
+# * cope with changed \bibliography inside of tex-files (extract bibfiles in loop; 
+# check tex-files for \cite-changes)
 
-# functions
-# =========
+# global functions
+# ================
 # sub clean
 # 	delete temp files
 #
@@ -30,54 +25,70 @@ use Tie::IxHash;   # ordered hashes
 # sub syntaxCheck
 # 	check cli syntax and parse params
 #
-# sub get_first_found_exe
-#		search path for a given number of executable files. break on first found file.
+# wolf functions
+# ================
+# sub check_for_pdf_annotations
+# 	show whether pdf annotations exist
 #
-#	sub get_pids
-#		get pid for a given command
-#
-# sub load_pdf_viewer
-#		load a pdf viewer, returns the name of the pdf viewer and a status code
-#
-# sub load_latex_editor
-# 	load gvim or other latex editor
+# sub copyfile
+# 	copy a file
 #
 # sub extract_bibfiles
 # 	extract bibfiles from latex file, and append extensions '.bib'
 #
+# sub extract_bibstyle
+# 	extract bibstyle from latex file
+#
 # sub extract_usedfiles
 # 	extract filenames from latex file
 #
-# sub print_tex_log_messages
-# 	print formatted warnings/errors/...
+# sub filename2temp
+# 	generate temp filename from orig filename
+#
+# sub format_std_out
+# 	get errors and warnings from tex log; returns compile mode
+#
+# sub get_first_found_exe
+# 	search path for a given number of executable files. break on first found file.
+#
+# sub get_pdf_viewer_annotations
+# 	cope with okulars annotations
+#
+# sub get_pids
+# 	get pid for a given command
 #
 # sub interprate_error
 # 	try to interprate error and translate it into more readable text
 #
+# sub latex_compile
+# 	compile latex file if changes are detected
+#
+# sub load_latex_editor
+# 	load gvim or other latex editor
+#
+# sub load_pdf_viewer
+# 	load a pdf viewer, returns the name of the pdf viewer and a status code
+#
+# sub msg
+# 	print messages to stdout
+#
+# sub msg_colored
+# 	print colored messages to stdout
+#
+# sub newest_change
+# 	get newest file of a given array of filenames
+#
 # sub ordered_hash_ref
-#		return ref to ordered (empty) hash 
+# 	return ref to ordered (empty) hash 
 #
 # sub parse_tex_log
 # 	get errors and warnings from tex log; returns compile mode
-# 
-# sub newest_change
-#		get newest file of a given array of filenames
-# 
-# sub filename2temp
-#		generate temp filename from orig filename
 #
-# sub copyfile
-#		copy a file
+# sub print_tex_log_messages
+# 	print formatted warnings/errors/...
 #
-# sub get_pdf_viewer_annotations
-#		cope with okulars annotations
-#
-#	sub check_for_pdf_annotations
-#		show whether pdf annotations exist
-#
-# sub latex_compile
-# 	compile latex file if changes are detected
 
+$| = 1;
 my @unlink_files = ();
 sub clean{
 	map unlink, @unlink_files;
@@ -93,32 +104,48 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.13.20141110';
+$main::VERSION = '1.16.20150302';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
-		'pdfviewers' => 'kpdf|evince|okular|acroread', # pdf viewers
-		'editors'    => 'gvim|kile|kate',              # text editor
-		'verbose'    => 1,                             # trace; grade of verbosity
-		'version'    => 0,                             # diplay version and exit
+		'editors'       => 'gvim|kile|kate',              # text editor
+		'colors'        => 1,                             # use colors
+		'format-output' => 1,                             # format std output
+		'min-crossrefs' => undef,                         # bibtex --min-crossrefs
+		'pdfviewers'    => 'kpdf|evince|okular|acroread', # pdf viewers
+		'verbose'       => 1,                             # trace; grade of verbosity
+		'version'       => 0,                             # diplay version and exit
 	);
 	GetOptions(\%params,
-		"pdfviewer|pdf-viewer=s" => sub { $params{'pdfviewers'} = $_[1].'|'.$params{'pdfviewers'};},
+		"colors!",
 		"editor=s" => sub { $params{'editors'} = $_[1].'|'.$params{'editors'};},
+		"format-output!",
+		"min-crossrefs=i",
+		"pdfviewer|pdf-viewer=s" => sub {
+			$params{'pdfviewers'} = $_[1].'|'.$params{'pdfviewers'};
+		},
 		"silent|quiet|q" => sub { $params{'verbose'} = 0;},
 		"very-verbose" => sub { $params{'verbose'} = 2;},
 		"verbose|v:+",
-		"version|V" => sub { Getopt::Long::VersionMessage();}, # auto_version will not auto make use of 'V'
-		"help|?|h" => sub { Getopt::Long::HelpMessage(-verbose=>99, -sections=>"NAME|SYNOPSIS|EXAMPLES");}, # auto_help will not auto make use of 'h'
+		# auto_version will not auto make use of 'V'
+		"version|V" => sub { Getopt::Long::VersionMessage();},
+		"help|?|h" => sub { Getopt::Long::HelpMessage(
+				-verbose => 99, 
+				-sections => "NAME|SYNOPSIS|EXAMPLES");
+		}, # auto_help will not auto make use of 'h'
 		"man" => sub { pod2usage(-exitval=>0, -verbose=>2);},
 	) or pod2usage(-exitval=>2);
 	$params{'verbose'} = 1 unless exists $params{'verbose'};
 	my @additional_params = (1,1); # number of additional params (min, max);
-	if(@ARGV<$additional_params[0] or ($additional_params[1]!=-1 and @ARGV>$additional_params[1])){
+	if(@ARGV<$additional_params[0] 
+			or ($additional_params[1] != -1 and @ARGV>$additional_params[1])){
 		if($additional_params[0]==$additional_params[1]){
-			print "number of arguments must be exactly $additional_params[0], but is ".(0+@ARGV).".\n";
+			print "number of arguments must be exactly $additional_params[0], but is " . 
+				(0+@ARGV) . ".\n";
 		}else{
-			print "number of arguments must be at least $additional_params[0] and at most ".($additional_params[1] == -1 ? 'inf' : $additional_params[1]).", but is ".(0+@ARGV).".\n";
+			print "number of arguments must be at least $additional_params[0] and at " . 
+				"most " . ($additional_params[1] == -1 ? 'inf' : $additional_params[1]) . 
+				", but is " . (0+@ARGV) . ".\n";
 		}
 		pod2usage(-exitval=>2);
 	}
@@ -126,578 +153,896 @@ sub syntaxCheck{
 	return \%params;
 }
 
-# search path for a given number of executable files. break on first found file.
-# get pid for a given command
-sub get_first_found_exe{
-	my $candidates = shift;
-	my $verbose = shift;
-	my @path = File::Spec->path();
-	for my $candidate(@$candidates){
-		print "* $candidate\n" if $verbose>1;
-		for my $dir(@path){
-			my $file = File::Spec->catfile($dir, $candidate);
-			return $candidate if -x $file;
-		}
-	}
-	return undef;
-}
+{
+	package Wolf;
+	use Data::Dumper;  # Dumper
+	use Date::Format;  # time2str
+	use File::Compare; # compare
+	use File::Copy;    # copy
+	use File::Slurp qw/read_dir slurp/;
+	use File::Spec;
+	use List::MoreUtils qw(uniq);
+	use Term::ANSIColor;
+	use Tie::IxHash;   # ordered hashes
 
-sub get_pids{
-	my $processRE = shift;       # regular expression for processes
-	my $user      = $ENV{USER};
-	# the following line may cause fork problems "resource temporarily unavailable"
-	#my $stdout = get_syscall_output_threaded("ps -ef | grep -v grep");
-	my $stdout = `ps -ef | grep -v grep`;
-	# fetch all processes of user
-	my @pids = ();
-	map {push @pids, $1 if /$user\s+ # user
-		(\d+)\s+          # pid
-		\d+\s+            # parent pid
-		\d+\s+            # ?
-		(?:\d\d:\d\d|[a-zA-Z]+\d+|\S+)\s+ # time
-		[a-z0-9\/?]+\s+   # display
-		\d\d:\d\d:\d\d\s+ # time
-		.*$processRE.*    # cmd
-		/x} split /\n/, $stdout;
-	return \@pids;
-}
-
-sub load_pdf_viewer{
-	my $file = shift;
-	my $pdfviewers = shift;
-	my $verbose = shift;
-	if(not defined $pdfviewers or @$pdfviewers==0 or $pdfviewers->[0] eq 'none'){
-		return (undef, 0);
-	}
-	print "search for pdf viewer\n" if $verbose>1;
-	my $pdfviewer = get_first_found_exe($pdfviewers, $verbose);
-	return (undef, 0) unless defined $pdfviewer;
-	my $pids = get_pids(qr/\Q$pdfviewer\E .*\Q$file\E\b$/);
-	# load if not loaded already
-	if(@$pids==0){
-		print "loading pdf viewer '$pdfviewer'\n" if $verbose>0;
-		my $pid = fork();
-		defined $pid or die "fork failed; $!\n";
-		if($pid == 0){
-			print "file $file does not exist, waiting until it exists." if not -e $file;
-			while(not -e $file){
-				sleep 1;
+	sub new{
+		my $class = shift;
+		my $params = shift;
+		my $self = bless {
+			'bibtex_params' => $params->{'bibtex_params'},
+			'colors'        => $params->{'colors'},
+			'format-output' => $params->{'format-output'},
+			'latexfile'     => $params->{'latexfile'},
+			'pdfviewer'     => undef,
+			'tmp_ltx'       => 'temp_latex_file' . time() . 
+				sprintf('%d', 1_000_000 * rand()),
+			'usedfiles'     => [$params->{'latexfile'} . '.tex'],
+			'verbosity'     => $params->{'verbosity'} // 1,
+			'color-def'     => {
+				'err'     => 'bold white on_red',
+				'warn'    => 'bold yellow on_black',
+				'notice'  => 'yellow on_black',
+				'err_std' => 'white on_black',
 			}
-			system($pdfviewer.' '.$file.' &');
-			exit 0;
-		}
-		return ($pdfviewer, 1);
-	}else{
-		print "pdf viewer '$pdfviewer' loaded already\n" if $verbose>0;
-		return ($pdfviewer, 2);
-	}
-}
-
-sub load_latex_editor{
-	my $files         = shift;
-	my $latex_editors_string = shift;
-	my $verbose       = shift;
-	my $latex_editors = [split /\|/, $latex_editors_string];
-	if(not defined $latex_editors_string or @$latex_editors==0 or $latex_editors->[0] eq 'none'){
-		return undef;
-	}
-	print "search for latex editor\n" if $verbose>1;
-	my $latex_editor = get_first_found_exe($latex_editors, $verbose);
-	my $pids = get_pids(qr/\Q$latex_editor\E .*\Q$files->[0]\E\b/);
-	# load if not loaded already
-	if(@$pids==0){
-		print "loading latex editor '$latex_editor'\n" if $verbose>0;
-		my $latex_editor_cmd = $latex_editor;
-		$latex_editor_cmd .= ' -p' if $latex_editor =~ /^g?vim\z/;
-		system($latex_editor_cmd.' '.(join ' ', @$files).' &'); 
-	}else{
-		print "latex editor '$latex_editor' loaded already\n" if $verbose>0;
-	}
-	return $latex_editor;
-}
-
-sub extract_bibfiles{ # from latex file, and append extensions '.bib'
-	my $orig_ltx = shift;
-	my $bibfiles = [];
-	my @latex_content = grep {!/^\s*%/} slurp $orig_ltx;
-	map {s/(?<!\\)(?:\\\\)*\K%.*//} @latex_content;
-	my $latexcontent = join '', @latex_content;
-	while($latexcontent=~/\\bibliography\{(.*?)\}/g){
-		push @$bibfiles, (map {$_.='.bib'} split /\s*,\s*/, $1);
-	}
-	# check paths of $BIBINPUTS if file is not in current working directory
-	my @bibinputs = split /:/, `kpsewhich --expand-path '\$BIBINPUTS'`;
-	map {
-		if(not -f $_){
-			for my $path(@bibinputs){
-				if(-f $path.'/'.$_){
-					$_ = $path.'/'.$_;
-					last;
-				}
+		}, $class;
+		# check latex file
+		unless(-e $self->{'latexfile'}.'.tex'){
+			$self->{'latexfile'} =~ s/\.tex$//;
+			unless(-e $self->{'latexfile'} . '.tex'){
+				$self->msg(0, "file '$self->{'latexfile'}.tex' does not exist", 'error');
+				exit 1;
 			}
 		}
-	} @$bibfiles;
-	return $bibfiles;
-}
+		# pdf viewer
+		my $status_pdfviewer = $self->load_pdf_viewer($params->{'pdfviewers'});
+		if($status_pdfviewer == 0){
+			$self->msg(1, "couldn't load pdf viewer '$self->{'pdfviewer'}'", 'warning');
+		}
+		return $self;
+	}
 
-sub extract_usedfiles{ # from latex file
-	my $latexfile   = shift;
-	my $file_prefix = shift;
-	my $usedfiles   = shift;
-	my $method      = shift // 'flsfile';
-	my $errors = [];
-	if($method eq 'flsfile'){
-		@$usedfiles = slurp($file_prefix.'.fls');
-		my $path = shift @$usedfiles;
-		$path =~s/^PWD (.*)\n?/$1\//;
-		@$usedfiles = uniq(
-			grep {
-				/^INPUT (?!$file_prefix)(.*)/ and 
-				$_ = substr($1, 0, 1) eq '/' ? $1 : $path.$1;
-			} @$usedfiles
-		);
-	}elsif($method eq 'logfile'){ # method till 2013-08-16: faulty because not all files were matched
-		@$usedfiles = slurp($file_prefix.'.log') =~m/^(?:\)+ )?\(\K[.\/][^ \s)]+|^\s*File: \K[.\/][^ \s]+/gm;
-	}elsif('texfile'){ # very old method till 2012: faulty because not all files were matched
-		if(open(my $INFILE, '<', $latexfile)){
-			while(my $line = <$INFILE>){
-				while($line =~/\\in(?:clude(?:graphics)?|put)\s*(?:\[[^\]]+\]\s*)?\{(.*?)\}/g){
-					my $filename = 
-						-e $1.'.tex' ? $1.'.tex' :
-						-e $1.'.eps' ? $1.'.eps' :
-						-e $1.'.jpg' ? $1.'.jpg' :
-						-e $1.'.pdf' ? $1.'.pdf' :
-						-e $1.'.png' ? $1.'.png' : $1;
-					unless($filename ~~ $usedfiles){
-						push @$usedfiles, $filename;
-						push @$errors, @{extract_usedfiles($usedfiles->[-1], undef, $usedfiles, 'texfile')}; # recursion!
+	sub check_for_pdf_annotations{
+		my $self      = shift;
+		my $pdf_file  = shift;
+		my ($exist_anno_file, $exist_anno, $infostring) = 
+			$self->get_pdf_viewer_annotations($pdf_file);
+		if($exist_anno_file){
+			if(defined $self->{'pdfviewer'}){
+				$self->msg(1, "else");
+				$self->msg(1, "====");
+				$self->msg(1, "your pdfviewer: $self->{'pdfviewer'}");
+			}
+			if($exist_anno>0){
+				$self->msg(0, 
+					'there seem to be annotations for this file that would be lost when ' . 
+						'recompiling', 
+					'warning');
+				$self->msg(0, $infostring);
+				$self->msg(0, 'press <ctrl+c> to leave, or <enter> to continue.');
+				<STDIN>;
+			}else{
+				$self->msg(1, $infostring);
+			}
+		}
+		return $exist_anno;
+	}
+
+	sub copyfile{
+		my $self = shift;
+		my $src  = shift;
+		my $dest = shift;
+		my $ret;
+		if(-e $src){
+			#$ret = `cp $src $dest`;
+			$ret = copy($src, $dest) 
+				or $self->msg(0, "copy failed: $! '$src'", 'warning');
+		}else{
+			$ret = 0;
+		}
+		return $ret;
+	}
+
+	sub extract_bibfiles{ # from latex file, and append extensions '.bib'
+		my $self     = shift;
+		my $orig_ltx = shift;
+		my $bibfiles = [];
+		my @latex_content = grep {!/^\s*%/} slurp $orig_ltx;
+		map {s/(?<!\\)(?:\\\\)*\K%.*//} @latex_content;
+		my $latexcontent = join '', @latex_content;
+		while($latexcontent=~/\\bibliography\{(.*?)\}/g){
+			push @$bibfiles, (map {$_.='.bib'} split /\s*,\s*/, $1);
+		}
+		# check paths of $BIBINPUTS if file is not in current working directory
+		my @bibinputs = split /:/, `kpsewhich --expand-path '\$BIBINPUTS'`;
+		map {
+			if(not -f $_){
+				for my $path(@bibinputs){
+					if(-f $path.'/'.$_){
+						$_ = $path.'/'.$_;
+						last;
 					}
 				}
 			}
-			close($INFILE);
-		}else{
-			push @$errors, "error reading file '$latexfile'. $!";
-			#print "$errors->[-1]\n";
-		}
+		} @$bibfiles;
+		return $bibfiles;
 	}
-	return $errors;
-}
 
-sub print_tex_log_messages{
-	my $type = shift;
-	my $msgs = shift;
-	if(keys %$msgs>0){
-		print "\n$type\n";
-		print '='x(length($type))."\n";
-		map {print $_.' ('.$$msgs{$_}."x)\n\n"} keys %$msgs;
-	}else{
-		#print "\nno $type\n";
-	}
-}
-
-sub interprate_error{
-	my $orig_ltx  = shift;
-	my $tmp_ltx_f = shift;
-	my $type      = shift; # ltx_..., bib_...
-	my $error     = shift;
-	my $could_interprate_error = 0;
-	my $interpretation;
-	if($type =~ /^ltx_/){
-		my $err_re = qr/(?:!|[^:\n]+\.[^:\n]+:[0-9]+:)/;
-		if($error=~/^! Undefined control sequence\.\nl.(\d+) (?:\.\.\..*)(\\\S+)/){
-			$could_interprate_error = 1;
-			$interpretation = "command '$2' in line $1 is unknown. maybe the command is misspelled or you didn't load the right package.";
-		}elsif($error=~/^([^:\n]+\.[^:\n]+):([0-9]+): Undefined control sequence\.\n.*?\.\.\..*(\\\S+)/){
-			$could_interprate_error = 1;
-			my $filename = $1;
-			my $line = $2;
-			my $command = $3;
-			$filename = $orig_ltx if $filename =~/\Q$tmp_ltx_f\E$/;
-			$interpretation = "command '$command' in line $line of file '$filename' is unknown.\nmaybe the command is misspelled or you didn't load the right package.";
-		}
-		if($error=~/^$err_re Missing \$ inserted.\s+(?:.*\s+){1,3}l.(\d+)/ or 
-			$error=~/^! Extra \}, or forgotten \$.\s+.*\s+l.(\d+)/){
-			$could_interprate_error = 1;
-			$interpretation = "probably you forgot a dollar-sign (\$) somewhere around line $1.";
-		}
-		if($error=~/^$err_re Argument of \\\@\Ecaption has an extra }.\E.*\s+\\par/s){
-			$could_interprate_error = 1;
-			$interpretation = "maybe you should use '\\newline' instead of '\\\\'.";
-		}
-	}elsif($type =~ /^bib_/){
-	}
-	if($could_interprate_error){
-		print "\nwolf hint: ".(join ' 'x11, split /(\n)/, $interpretation)."\n";
-		#print "wolf hint: $interpretation\n";
-	}
-	return $could_interprate_error;
-}
-
-sub ordered_hash_ref{
-	tie my %hash, 'Tie::IxHash', @_;
-	return \%hash;
-}
-
-sub parse_tex_log{
-	my $orig_ltx    = shift;
-	my $tmp_ltx_f   = shift;
-	my $tmp_ltx_log = shift;
-	my $tmp_bib_log = shift;
-	my $extract_errors = shift;
-	my $verbose = shift;
-	my $log = slurp($tmp_ltx_log);
-	my $compile_mode = 0;
-	# cases, where latex-rerun should help
-	$compile_mode |= 1 if $log=~/
-		\QLaTeX\sWarning:\sLabel(s)\smay\shave\schanged.\sRerun\sto\sget\scross-references\sright.\E|
-		pdfTeX\swarning\s\(dest\):\sname\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
-		Package\srerunfilecheck\sWarning:\sFile\s/x;
-	# cases, where bibtex should be used (again)
-	$compile_mode |= 2 if $log=~/(?:LaTeX|Package natbib) Warning: Citation .* on page \d+ undefined on input line/;
-	#$compile_mode |= 2 if $log=~/Package natbib Warning: There were undefined citations/;
-	# cases, where aux-file should be deleted
-	$compile_mode |= 4 if $log=~/
-		!\sPackage\sbabel\sError:\sYou\shaven't\sloaded\sthe\slanguage/x;
-	tie my %msgs, 'Tie::IxHash';
-	%msgs = (
-		'ltx_errs' => {
-			'occs'    => ordered_hash_ref(),
-			'caption' => 'latex errors',
-		},
-		'bib_errs' => {
-			'occs'    => ordered_hash_ref(),
-			'caption' => 'bibtex errors',
-		},
-		'ltx_warnings' => {
-			'occs'    => ordered_hash_ref(),
-			'caption' => 'latex warnings',
-		},
-		'bib_warnings' => {
-			'occs'    => ordered_hash_ref(),
-			'caption' => 'bibtex warnings',
-		},
-		'ltx_hyphen' => {
-			'occs'    => ordered_hash_ref(),
-			'caption' => 'hyphenation problems',
-		},
-		'ltx_boxes' => {
-			'occs'    => ordered_hash_ref(),
-			'caption' => 'over-/underfull boxes',
-		},
-	);
-	my $msg;
-	if($verbose>0){
-		my $biblog = (-e $tmp_bib_log) ? slurp($tmp_bib_log) : undef;
-		print "\nsummary\n";
-		print "=======\n";
-		# over-/underfull boxes
-		$msg = $msgs{'ltx_boxes'}; #`grep -i -E "full .*box" $tmp_ltx_log`;
-		while($log=~/^(?:Over|Under)full .*box.*(?:\n\[\]\\OT1\/.*)?/mgp){
-			++$msg->{'occs'}->{${^MATCH}};
-		}
-		print_tex_log_messages($msg->{'caption'}, $msg->{'occs'});
-		# hyphenation problems
-		$msg = $msgs{'ltx_hyphen'}; # `grep -iA 2 -E "^\\\\T1/" $tmp_ltx_log`;
-		while($log=~/^(?:\\|\[\]\\O)T1(?:.*+[\n\r]+){2}.*/mgp){
-			++$msg->{'occs'}->{${^MATCH}};
-		}
-		print_tex_log_messages($msg->{'caption'}, $msg->{'occs'});
-		# bibtex warnings
-		$msg = $msgs{'bib_warnings'};
-		if(defined $biblog){
-			while($biblog=~/^Warning--.*/mgp){
-				++$msg->{'occs'}->{${^MATCH}};
+	sub extract_bibstyle{
+		my $self      = shift;
+		my $used_latex_files = [grep {m/\.tex\z/} @{$self->{'usedfiles'}}];
+		my $bibstyles = [];
+		for my $file(@$used_latex_files){
+			my $content = slurp($file);
+			while($content =~ /\\bibliographystyle\s*\{([^}]++)\}/gs){
+				push @$bibstyles, (split /,\s*/, $1);
 			}
 		}
-		print_tex_log_messages($msg->{'caption'}, $msg->{'occs'});
-		# bibtex errors
-		$msg = $msgs{'bib_errs'};
-		if(defined $biblog){
-			while($biblog=~/^.*\berrors?\b.*(?:\n---.*(?:\n :.*)*)?/mgp){
-				next if ${^MATCH} =~/^\(There was (\d+) error messages?\)/;
-				++$msg->{'occs'}->{${^MATCH}};
-			}
-		}
-		print_tex_log_messages($msg->{'caption'}, $msg->{'occs'});
-		# warnings
-		$msg = $msgs{'ltx_warnings'}; # `grep -iA 1 warning $tmp_ltx_log`;
-		while($log=~/^(?:Package ([a-zA-Z0-9_-]+) [wW]arning.*(?:\(\1\).*+[\n\r]*)*|.*(?i:warning).*+[\n\r]*.*)/mgp){
-			my $package = $1;
-			next if ${^MATCH} =~/Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
-			my $w = ${^MATCH};
-			$w =~s/\n\n(?:Package .*|[\s()]*$)//s;
-			# maybe warnings continues on next line(s)
-			# space or paranthesis on next line indicate that the warning continues on next line
-			if($log=~/\G(?:\n\x20.+)+/mgcp){ # and $w =~/^Package subfig Warning:/
-				$w .= join ' ', split / *\n */, ${^MATCH};
-			}elsif(defined $package and $log=~/\G(?:\n\($package\).+)+/mgcp){
-				$w .= ${^MATCH};
-			}
-			while($w =~ /[,:]\s*$/){ # comma and colon indicate that the warning continues on next line
-				$log=~/\G\n.*$/mgp;
-				$w .= ${^MATCH};
-			}
-			++$msg->{'occs'}->{$w};
-		}
-		print_tex_log_messages($msg->{'caption'}, $msg->{'occs'});
-		# errors
-		$msg = $msgs{'ltx_errs'}; # `grep -iA 2 -B 1 -E "^!" $tmp_ltx_log`.`grep -iA 1 -B 1 error $tmp_ltx_log`;
-		while($log=~/^(?:
-				Package\s([a-zA-Z0-9_-]+)\s[eE]rror.*(?:\(\1\).*+\s*)*| # package errors
-				!(?:.*\s+){1,3}l\.\d+(?-s:.*)|              # normal errors indicating a line
-				!(?:.*\s+){2}.*|                            # normal errors
-				[^:\n]+\.[^:\n]+:[0-9]+:\x20(?:.+\n){1,3}|  # file:line: errors
-				.*error.*+\s*.*                             # other errors
-			)/mgxp){
-			my $err = ${^MATCH};
-			$err =~ s/[\n\r]+$//;
-			next if $err =~/Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
-			next if $err =~/file:line:error style messages enabled/;
-			++$msg->{'occs'}->{$err};
-		}
-		print_tex_log_messages($msg->{'caption'}, $msg->{'occs'});
-		print "\nsummary of summary\n";
-		print "==================\n";
-		if(@$extract_errors > 0){
-			print "\nfile reading errors:\n";
-			map {print " $_\n"} @$extract_errors;
-		}
-		for my $m(reverse keys %msgs){
-			if(keys(%{$msgs{$m}->{'occs'}})>0){
-				my $first_occ_message = "first of $msgs{$m}->{'caption'}";
-				print "\n$first_occ_message\n";
-				print '=' x length($first_occ_message);
-				print "\n".(keys(%{$msgs{$m}->{'occs'}}))[0]."\n";
-				interprate_error($orig_ltx, $tmp_ltx_f, $m, (keys(%{$msgs{$m}->{'occs'}}))[0]);
-				print "\n";
-			}
-		}
-		for my $m(reverse values %msgs){
-			printf "% 3d $m->{'caption'} \n", scalar(keys %{$m->{'occs'}}),
-		}
-		print "\n";
+		return $bibstyles;
 	}
-	if($compile_mode & 2 == 0){
-		$compile_mode |= 2 if keys(%{$msgs{'bib_errs'}->{'occs'}}) + keys(%{$msgs{'bib_warnings'}->{'occs'}})> 0
-	}
-	return $compile_mode;
-}
 
-sub newest_change{
-	my $files = shift;
-	my $max_date = 0;
-	for my $file(@$files){
-		next unless -e $file;
-		$max_date = (stat $file)[9] if (stat $file)[9] > $max_date;
-	}
-	return $max_date;
-}
-
-sub filename2temp{
-	my $filename = shift;
-	$filename =~s/[\/*?]/_/g;
-	return 'temp_'.$filename;
-}
-
-sub copyfile{
-	my $src = shift;
-	my $dest = shift;
-	my $ret;
-	if(-e $src){
-		#$ret = `cp $src $dest`;
-		$ret = copy($src, $dest) or warn "copy failed: $! '$src'";
-	}else{
-		$ret = 0;
-	}
-	return $ret;
-}
-
-sub get_pdf_viewer_annotations{
-	my $pdf_file_full_path = shift;
-	my $verbose            = shift;
-	$pdf_file_full_path=~/([^\/]+)$/;
-	my $pdf_file = $1;
-	my $pdf_size = (stat $pdf_file_full_path)[7];
-	my $numAnnotations = 0;
-	my $existAnnotations = 0;
-	my $info_string = '';
-	my @okular_files = ();
-	my @kdedirs = grep /^.kde\d*$/, read_dir($ENV{'HOME'});
-	for my $kdedir(@kdedirs){
-		my $path = $ENV{'HOME'}.'/'.$kdedir.'/share/apps/okular/docdata';
-		if(-e $path){
-			$info_string .= "'$path' exists, looking for '$pdf_file' xml-files.\n" if $verbose>1;
-			push @okular_files, grep {/^\d+\Q.$pdf_file.xml\E$/ and $_="$path/$_";} read_dir($path);
-		}
-	}
-	$info_string .= "found some okular annotations for files with similar filename:\n" if @okular_files>0 and $verbose>0;
-	map {
-		my $filemoddate = time2str("%Y-%m-%d %T", (stat $_)[9]);
-		my $filesize = (stat $_)[7];
-		/\/(\d+)\Q.$pdf_file.xml\E$/;
-		my $pdf_file_size_from_file_name = $1;
-		if(defined $pdf_size and $pdf_file_size_from_file_name eq $pdf_size){
-			++$numAnnotations if $filesize>500;
-			$existAnnotations = 1;
-			$info_string .= '* ' if $verbose>0;
-		}else{
-			$info_string .= '  ' if $verbose>0;
-		}
-		$info_string .= "$filemoddate, $_ ($filesize B)\n" if $verbose>0;
-	} sort {(stat $a)[9] <=> (stat $b)[9]} @okular_files;
-	return ($existAnnotations, $numAnnotations, $info_string);
-}
-
-sub check_for_pdf_annotations{
-	my $pdfviewer = shift;
-	my $pdf_file  = shift;
-	my $verbose   = shift;
-	my ($exist_anno_file, $exist_anno, $infostring) = get_pdf_viewer_annotations($pdf_file, $verbose);
-	if($exist_anno_file){
-		if($verbose>0 and defined $pdfviewer){
-			print "else\n====\n";
-			print "your pdfviewer: $pdfviewer\n";
-		}
-		if($exist_anno>0){
-			print "warning: there seem to be annotations for this file that would be gone when recompiling.\n";
-			print $infostring;
-			print "press <ctrl+c> to leave, or <enter> to continue.\n";
-			<STDIN>;
-		}else{
-			print $infostring;
-		}
-	}
-	return $exist_anno;
-}
-
-sub latex_compile{
-	my $params      = shift;
-	my $pdfviewer   = shift;
-	my $orig_ltx    = $params->{'latexfile'}.'.tex'; # orig latex file 
-	my $orig_btx    = extract_bibfiles($orig_ltx);   # orig bibtex files
-	my $pdf_file    = $params->{'latexfile'}.'.pdf'; # result pdf file
-	my $other_files = [];                          # filenames of files, that are used
-	my $tmp_ltx     = 'temp_latex_file'.time().sprintf('%d', 1_000_000*rand());
-	my $tmp_ltx_f   = $tmp_ltx.'.tex'; # this file will be used for compiling
-	my $tmp_ltx_log = $tmp_ltx.'.log'; # this file will be used for error parsing
-	my $tmp_bib_log = $tmp_ltx.'.blg'; # this file will be used for error parsing
-	my $tmp_ltx_pdf = $tmp_ltx.'.pdf'; # this will be the result and will be copied 
-	#                                    over $params->{'latexfile'}.'.pdf'
-	push @unlink_files, $tmp_ltx.$_ for ('.tex', '.log', '.pdf', '.aux', '.bbl', 
-		'.blg', '-blx.bib', '.brf', '.fls', '.loa', '.lof', '.lot', '.nav', '.nlo', '.run.xml', 
-		'.snm', '.toc', '.out');
-	push @unlink_files, filename2temp($_) for @$orig_btx;
-	my $compile_mode = 0; # 0 = do nothing; 1 = compile latex (without bibtex); 
-	#                       2 = compile bibtex and latex
-	my $cmdlatex = 'pdflatex';
-	my $compiling_counter = 0;
-	# maybe better set -file-line-error ?
-	my $complete_latex_command = "$cmdlatex -recorder -file-line-error -shell-escape -interaction=nonstopmode --halt-on-error $tmp_ltx_f";
-	my $last_change_time_bak = 0;
-	while(1){
-		my $last_change_time = newest_change($other_files);
-		for my $bib(@$orig_btx){
-			if(-f $bib){ # if bibtex files exist and have been changed
-				$compile_mode |= 2 if compare($bib, filename2temp($bib));
+	sub extract_usedfiles{ # from latex file
+		my $self        = shift;
+		my $latexfile   = shift // $self->{'latexfile'} . '.tex';
+		my $usedfiles   = shift;
+		my $method      = shift // 'flsfile';
+		my $errors = [];
+		if($method eq 'flsfile'){
+			my $file_prefix = $self->{'tmp_ltx'};
+			@$usedfiles = slurp($file_prefix . '.fls');
+			my $path = shift @$usedfiles;
+			$path =~s/^PWD (.*)\n?/$1\//;
+			@$usedfiles = uniq(
+				grep {
+					/^INPUT (?!$file_prefix)(.*)/ and 
+					$_ = substr($1, 0, 1) eq '/' ? $1 : $path.$1;
+				} @$usedfiles
+			);
+		# method till 2013-08-16: faulty because not all files were matched
+		}elsif($method eq 'logfile'){
+			my $file_prefix = $self->{'tmp_ltx'};
+			@$usedfiles = slurp($file_prefix . '.log') =~ 
+				m/^(?:\)+ )?\(\K[.\/][^ \s)]+|^\s*File: \K[.\/][^ \s]+/gm;
+		# very old method till 2012: faulty because not all files were matched
+		}elsif('texfile'){
+			if(open(my $INFILE, '<', $latexfile)){
+				while(my $line = <$INFILE>){
+					while($line =~ /\\in(?:clude(?:graphics)?|put)\s*
+							(?:\[[^\]]+\]\s*)? \{(.*?)\}/gx){
+						my $filename = 
+							-e $1.'.tex' ? $1.'.tex' :
+							-e $1.'.eps' ? $1.'.eps' :
+							-e $1.'.jpg' ? $1.'.jpg' :
+							-e $1.'.pdf' ? $1.'.pdf' :
+							-e $1.'.png' ? $1.'.png' : $1;
+						unless(grep {$_ eq $filename} @{$self->{'usedfiles'}}){
+							push @{$self->{'usedfiles'}}, $filename;
+							push @$errors, @{$self->extract_usedfiles(
+								$self->{'usedfiles'}[-1], undef, 'texfile'
+							)}; # recursion!
+						}
+					}
+				}
+				close($INFILE);
 			}else{
-				print "error: file $bib not found\n";
-				sleep 1;
+				push @$errors, "error reading file '$latexfile'. $!";
+				#$self->msg(0, $errors->[-1]);
 			}
 		}
-		if($compile_mode & 4){ # in some cases the aux file should be deleted
-			unlink "$tmp_ltx.aux";
-			$compile_mode ^= 4;
-			$compile_mode |= 1;
+		return $errors;
+	}
+
+	sub filename2temp{
+		my $self     = shift;
+		my $filename = shift;
+		$filename =~ s/[\/*?]/_/g;
+		return 'temp_'.$filename;
+	}
+
+	sub format_std_out{
+		my $self        = shift;
+		my $cmd_entries = shift;
+		for my $cmd_entry(@$cmd_entries){
+			my $type = $cmd_entry->{'type'};
+			my $cmd = $cmd_entry->{'cmd'};
+			my $child_pid = open(my $stdout, '-|', "$cmd 2>&1");
+			if($child_pid){
+				if($self->{'verbosity'} > 0){
+					if($self->{'format-output'} == 0){
+						while(<$stdout>){
+							print $_;
+						}
+					}else{
+						if($type eq 'pdflatex'){
+							my $indent_depth = 0;
+							my $cont_line = 0; # line is going to be continued
+							# the last paranthesis of the previous line was a '('
+							my $opening_paren_prev_line = 0; 
+							my $prev_line = "\n"; 
+							my $bracket_open = 0; 
+							my $color;
+							while(<$stdout>){
+								my $line = $_;
+								my $output = '';
+								my $line_was_cont = $cont_line; # line was being continued
+								#next if $prev_line =~ /^\s*$/ and $line =~ /^\s*$/;
+								$prev_line = $line;
+								if($line =~ /pgfcoreshade\.code\.tex/){
+									my $a = 'lalala';
+								}
+								while(length($line) > 0){
+									my $indent = '  ' x $indent_depth;
+									# brackets [x ...]
+									if($bracket_open){
+										$self->msg(4, '[bracket is open]');
+										if($line =~ /\]/){
+											$bracket_open = 0;
+											--$indent_depth;
+										}
+										if($line =~ /^(\s*[{<][^{<>}]*)/){
+											$self->msg(4, '[got < or {]');
+											$line = substr($line, length($1));
+											$output .= $indent.$1;
+											$cont_line = 1;
+											$opening_paren_prev_line = 0;
+										}elsif($line =~ /^([^{<>}]*[>}])/){
+											$line = substr($line, length($1));
+											$output .= "$1\n";
+											$cont_line = 0;
+											$opening_paren_prev_line = 0;
+										}
+										$line =~ s/^\s+//;
+									}elsif($line =~ /^((?:[^\[]|\[[0-9]+\])*+) (\[[0-9]+\s*+) [{<]/x
+											# } for vim
+											and length($line) > 78){
+										$self->msg(4, '[got bracket]');
+										$line = substr($line, length($2) + length($1));
+										my $pre_bracket = $1;
+										my $bracket = $2;
+										$bracket =~ s/^\s*+(.*\S)\s*$/$1/;
+										$output .= $indent.$pre_bracket."\n";
+										$output .= $indent.$bracket."\n";
+										++$indent_depth;
+										$cont_line = 0;
+										$bracket_open = 1;
+										$opening_paren_prev_line = 0;
+									}
+									# latex warning
+									elsif($line =~ /^(LaTeX Warning: .*)$/){
+										$self->msg(4, '[got latex warning]');
+										$output .= $indent.$1;
+										$line = '';
+										$cont_line = 1;
+										$opening_paren_prev_line = 0;
+									}
+									# ( ... ) ...
+									elsif($line =~ /^( [^()]*+ \( [^()]*+ \) [^()]*+ )/x){
+										$self->msg(4, '[got ()]');
+										$output .= $indent if !$cont_line;
+										$output .= $1;
+										$line = substr($line, length($1));
+										$cont_line = length($line) > 0 ? 1 : 0;
+										$opening_paren_prev_line = 0;
+									}
+									# ( ...
+									elsif($line =~ /^\s*+\( ( [^()]*+ )/x){
+										$output .= $indent if !$cont_line;
+										my $filename = $1;
+										$self->msg(4, "[got (, length = " . length($filename) . "]");
+										$line = substr($line, length($filename) + 1);
+										++$indent_depth;
+										if(length($filename) == 79 and $filename =~ /^\S+$/){
+											chomp $filename;
+											$output .= "($filename";
+											$cont_line = 1;
+											$opening_paren_prev_line = 1;
+										}else{
+											$output .= "($filename\n";
+											$output =~ s/\n\n\z/\n/;
+											$cont_line = 0;
+											$opening_paren_prev_line = 0;
+										}
+									}
+									# ... )
+									elsif($indent_depth > 0 and $line =~ /^([^()]*+) \)/x){
+										$self->msg(4, '[got )]');
+										my $prefix = $1; 
+										$line = substr($line, length($1) + 1);
+										$line =~ s/^ +//;
+										$line = '' if $line =~ /^\s+$/;
+										if($prefix =~ /^\s*$/){
+											$output .= "\n" if $cont_line and !$opening_paren_prev_line;
+										}else{
+											$output .= $indent if !$cont_line;
+											$output .= $prefix;
+											$output .= "\n" if !$opening_paren_prev_line;
+										}
+										--$indent_depth;
+										$indent = '  ' x $indent_depth;
+										$output .= $indent if !$opening_paren_prev_line;
+										$output .= ")\n";
+										$cont_line = 0;
+										$opening_paren_prev_line = 0;
+									}else{
+										$output .= $indent if !$cont_line;
+										$output .= $line;
+										$line = '';
+										$cont_line = 0;
+										$opening_paren_prev_line = 0;
+									}
+								}
+								chomp $output;
+								$output =~ s/\Q$self->{'tmp_ltx'}/$self->{'latexfile'}/g;
+								my $parsed = "$type: ";
+								print $parsed if $line_was_cont == 0;
+								if($output =~ /\b(?:error|warning)\b/i){
+									$color = $self->{'color-def'}{'err_std'};
+								}
+								$self->msg_colored(1, '' . (join "\n$parsed", split /\n/, $output), $color);
+								if($cont_line == 0){
+									undef $color;
+									print "\n";
+								}
+							}
+						}else{
+							# bibtex or other cmds
+							while(<$stdout>){
+								print "$type: $_";
+							}
+						}
+					}
+				}
+				waitpid $child_pid, 0;
+			}else{ # no child pid -> is child
+				# child should just die
+				exit;
+			}
+			last if $? !=0;
+		} # end for @$cmd_entries
+	}
+
+	# search path for a given number of executable files. break on first found file.
+	# get pid for a given command
+	sub get_first_found_exe{
+		my $self       = shift;
+		my $candidates = shift;
+		my @path = File::Spec->path();
+		for my $candidate(@$candidates){
+			$self->msg(2, "* $candidate");
+			for my $dir(@path){
+				my $file = File::Spec->catfile($dir, $candidate);
+				return $candidate if -x $file;
+			}
 		}
-		if($compile_mode & 2){ # compile and use bibtex
-			# copy orig bibtex files to temp bibtex files
-			# copy orig latex file to temp latex file
-			# compile latex file 
-			# use bibtex
-			# create pdf file
-			map {copyfile($_, filename2temp($_))} @$orig_btx;
-			copyfile($orig_ltx, $tmp_ltx_f);
-			# after bibtex actually pdflatex has to be called twice to avoid citation 
-			# warnings. but as the log file is searched for undefined Citations, this 
-			# second call should be unnecessary.
-			my $cmd = "$complete_latex_command && bibtex $tmp_ltx && $complete_latex_command"; # && $complete_latex_command
-			($params->{'verbose'}>0) ? system($cmd) : `$cmd`;
-		}elsif($compile_mode & 1
-			|| compare($orig_ltx, $tmp_ltx_f)
-			|| `find . -newer $tmp_ltx_f`=~/\.(?:cls|sty)$|\/gfx\/.*\.(?:eps|p[dg]f|png|tex)\n/m
-			|| $last_change_time_bak < $last_change_time
-			){
-			# if latex file or related files have been changed
-			#  compile w/o using bibtex
-			copyfile($orig_ltx, $tmp_ltx_f);
-			my $cmd = $complete_latex_command; # " && $complete_latex_command";
-			($params->{'verbose'}>0) ? system($cmd) : `$cmd`;
-			# && latex -shell-escape -interaction=nonstopmode --halt-on-error $orig_ltx.tex && dvips $orig_ltx.dvi -o $orig_ltx.ps && ps2pdf $orig_ltx.ps
-		}else{ # else do nothing
-			$compiling_counter = 0;
-			sleep 1;
-			next;
+		return undef;
+	}
+
+	sub get_pdf_viewer_annotations{
+		my $self               = shift;
+		my $pdf_file_full_path = shift;
+		$pdf_file_full_path=~/([^\/]+)$/;
+		my $pdf_file = $1;
+		my $pdf_size = (stat $pdf_file_full_path)[7];
+		my $numAnnotations = 0;
+		my $existAnnotations = 0;
+		my $info_string = '';
+		my @okular_files = ();
+		my @kdedirs = grep /^.kde\d*$/, read_dir($ENV{'HOME'});
+		for my $kdedir(@kdedirs){
+			my $path = $ENV{'HOME'}.'/'.$kdedir.'/share/apps/okular/docdata';
+			if(-e $path){
+				if($self->{'verbosity'} > 1){
+					$info_string .= "'$path' exists, looking for '$pdf_file' xml-files.\n";
+				}
+				push @okular_files, grep {
+					/^\d+\Q.$pdf_file.xml\E$/ and $_="$path/$_";
+				} read_dir($path);
+			}
 		}
-		# get filenames of files that are used
-		$other_files = [];
-		my $extract_errors = extract_usedfiles($orig_ltx, $tmp_ltx, $other_files, 'flsfile');
-		$last_change_time_bak = newest_change($other_files);
-		$compile_mode = parse_tex_log($orig_ltx, $tmp_ltx_f, $tmp_ltx_log, $tmp_bib_log, $extract_errors, $params->{'verbose'});
-		if(++$compiling_counter>2 and $compile_mode>0){
-			print "wolf notice: halt loop for there seem to persist errors/warnings.\n";
-			$compile_mode = 0;
+		if(@okular_files>0 and $self->{'verbosity'} > 0){
+			$info_string .= "found some okular annotations for files with similar filename:\n";
 		}
-		if(compare($tmp_ltx_pdf, $pdf_file)){
-			check_for_pdf_annotations($pdfviewer, $pdf_file, $params->{'verbose'});
-			#sleep 2 if $pdfviewer eq 'okular';
-			sleep 2 if defined $pdfviewer and $pdfviewer=~/^(?:okular|evince)$/; # otherwise copying could be started before reloading of pdf is finished, I guess
-			copyfile($tmp_ltx_pdf, $pdf_file);
+		map {
+			my $filemoddate = time2str("%Y-%m-%d %T", (stat $_)[9]);
+			my $filesize = (stat $_)[7];
+			/\/(\d+)\Q.$pdf_file.xml\E$/;
+			my $pdf_file_size_from_file_name = $1;
+			if(defined $pdf_size and $pdf_file_size_from_file_name eq $pdf_size){
+				++$numAnnotations if $filesize > 500;
+				$existAnnotations = 1;
+				$info_string .= '* ' if $self->{'verbosity'} > 0;
+			}else{
+				$info_string .= '  ' if $self->{'verbosity'} > 0;
+			}
+			$info_string .= "$filemoddate, $_ ($filesize B)\n" if $self->{'verbosity'} > 0;
+		} sort {(stat $a)[9] <=> (stat $b)[9]} @okular_files;
+		return ($existAnnotations, $numAnnotations, $info_string);
+	}
+
+	sub get_pids{
+		my $self      = shift;
+		my $processRE = shift;       # regular expression for processes
+		my $user      = $ENV{USER};
+		# the following line may cause fork problems "resource temporarily unavailable"
+		#my $stdout = get_syscall_output_threaded("ps -ef | grep -v grep");
+		my $stdout = `ps -ef | grep -v grep`;
+		# fetch all processes of user
+		my @pids = ();
+		map {push @pids, $1 if /$user\s+ # user
+			(\d+)\s+          # pid
+			\d+\s+            # parent pid
+			\d+\s+            # ?
+			(?:\d\d:\d\d|[a-zA-Z]+\d+|\S+)\s+ # time
+			[a-z0-9\/?]+\s+   # display
+			\d\d:\d\d:\d\d\s+ # time
+			.*$processRE.*    # cmd
+			/x} split /\n/, $stdout;
+		return \@pids;
+	}
+
+	sub interprate_error{
+		my $self      = shift;
+		my $orig_ltx  = shift;
+		my $tmp_ltx_f = shift;
+		my $type      = shift; # ltx_..., bib_...
+		my $error     = shift;
+		my $could_interprate_error = 0;
+		my $interpretation;
+		if($type =~ /^ltx_/){
+			my $err_re = qr/(?:!|[^:\n]+\.[^:\n]+:[0-9]+:)/;
+			if($error =~ /^! Undefined control sequence\.\nl.(\d+) (?:\.\.\..*)(\\\S+)/){
+				$could_interprate_error = 1;
+				$interpretation = "command '$2' in line $1 is unknown. maybe the command is misspelled or you didn't load the right package.";
+			}elsif($error=~/^([^:\n]+\.[^:\n]+):([0-9]+): Undefined control sequence\.\n.*?\.\.\..*(\\\S+)/){
+				$could_interprate_error = 1;
+				my $filename = $1;
+				my $line = $2;
+				my $command = $3;
+				$filename = $orig_ltx if $filename =~/\Q$tmp_ltx_f\E$/;
+				$interpretation = "command '$command' in line $line of file '$filename' is unknown.\n" . 
+					"maybe the command is misspelled or you didn't load the right package.";
+			}
+			if($error=~/^$err_re Missing \$ inserted.\s+(?:.*\s+){1,3}l.(\d+)/ or 
+				$error=~/^! Extra \}, or forgotten \$.\s+.*\s+l.(\d+)/){
+				$could_interprate_error = 1;
+				$interpretation = "probably you forgot a dollar-sign (\$) somewhere around line $1.";
+			}
+			if($error=~/^$err_re Argument of \\\@\Ecaption has an extra }.\E.*\s+\\par/s){
+				$could_interprate_error = 1;
+				$interpretation = "maybe you should use '\\newline' instead of '\\\\'.";
+			}
+		}elsif($type =~ /^bib_/){
 		}
-		print ''.localtime()."\n" if $params->{'verbose'}>0;
+		if($could_interprate_error){
+			print "\n";
+			$self->msg(1, "hint: ".(join ' 'x11, split /(\n)/, $interpretation));
+			#$self->msg(1, "hint: $interpretation");
+		}
+		return $could_interprate_error;
+	}
+
+	sub latex_compile{
+		my $self        = shift;
+		my $orig_ltx    = $self->{'latexfile'} . '.tex'; # orig latex file 
+		my $orig_btx    = $self->extract_bibfiles($orig_ltx); # orig bibtex files
+		my $pdf_file    = $self->{'latexfile'} . '.pdf'; # result pdf file
+		my $other_files = [];                        # filenames of files, that are used
+		my $tmp_ltx     = $self->{'tmp_ltx'};
+		my $tmp_ltx_f   = $tmp_ltx . '.tex'; # this file will be used for compiling
+		my $tmp_ltx_log = $tmp_ltx . '.log'; # this file will be used for error parsing
+		my $tmp_bib_log = $tmp_ltx . '.blg'; # this file will be used for error parsing
+		my $tmp_ltx_pdf = $tmp_ltx . '.pdf'; # this will be the result and will be copied
+		#                                      over $self->{'latexfile'}.'.pdf'
+		push @unlink_files, $tmp_ltx . $_ for ('.tex', '.log', '.pdf', '.aux', '.bbl', 
+			'.blg', '-blx.bib', '.brf', '.fls', '.loa', '.lof', '.lot', '.nav', '.nlo', 
+			'.run.xml', '.snm', '.toc', '.out');
+		push @unlink_files, $self->filename2temp($_) for @$orig_btx;
+		unless(defined $self->{'bibtex_params'}->{'min-crossrefs'}){
+			my $bib_styles = $self->extract_bibstyle();
+			# see http://tug.ctan.org/biblio/bibtex/contrib/IEEEtran/IEEEtran_bst_HOWTO.pdf
+			print Dumper $bib_styles if $self->{'verbosity'} >= 3;
+			if(grep {$_ eq 'IEEEtran'} @$bib_styles){
+				$self->{'bibtex_params'}->{'min-crossrefs'} = 900;
+			}
+		}
+		my $compile_mode = 0; # 0 = do nothing; 1 = compile latex (without bibtex); 
+		#                       2 = compile bibtex and latex
+		my $cmdlatex = 'pdflatex';
+		my $compiling_counter = 0;
+		my $complete_latex_command = "$cmdlatex -recorder -file-line-error -shell-escape"
+			. " -interaction=nonstopmode --halt-on-error $tmp_ltx_f";
+		my $mincrossrefs = defined $self->{'bibtex_params'}{'min-crossrefs'} ? 
+			' --min-crossrefs='.$self->{'bibtex_params'}{'min-crossrefs'} : '';
+		my $last_change_time_bak = 0;
+		while(1){
+			my $last_change_time = $self->newest_change($other_files);
+			for my $bib(@$orig_btx){
+				if(-f $bib){ # if bibtex files exist and have been changed
+					$compile_mode |= 2 if compare($bib, $self->filename2temp($bib));
+				}else{
+					$self->msg(0, "file $bib not found", 'error');
+					sleep 1;
+				}
+			}
+			if($compile_mode & 4){ # in some cases the aux file should be deleted
+				unlink "$tmp_ltx.aux";
+				$compile_mode ^= 4;
+				$compile_mode |= 1;
+			}
+			if($compile_mode & 2){ # compile and use bibtex
+				# copy orig bibtex files to temp bibtex files
+				# copy orig latex file to temp latex file
+				# compile latex file 
+				# use bibtex
+				# create pdf file
+				map {$self->copyfile($_, $self->filename2temp($_))} @$orig_btx;
+				$self->copyfile($orig_ltx, $tmp_ltx_f);
+				# after bibtex actually pdflatex has to be called twice to avoid citation 
+				# warnings. but as the log file is searched for undefined Citations, this 
+				# second call should be unnecessary.
+				$self->format_std_out([
+					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
+					{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $tmp_ltx",}, 
+					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
+				]);
+			}elsif($compile_mode & 1
+				|| compare($orig_ltx, $tmp_ltx_f)
+				|| `find . -newer $tmp_ltx_f`=~/\.(?:cls|sty)$|\/gfx\/.*\.(?:eps|p[dg]f|png|tex)\n/m
+				|| $last_change_time_bak < $last_change_time
+				){
+				# if latex file or related files have been changed
+				#  compile w/o using bibtex
+				$self->copyfile($orig_ltx, $tmp_ltx_f);
+				$self->format_std_out([
+					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
+				]);
+				# && latex -shell-escape -interaction=nonstopmode --halt-on-error $orig_ltx.tex && dvips $orig_ltx.dvi -o $orig_ltx.ps && ps2pdf $orig_ltx.ps
+			}else{ # else do nothing
+				$compiling_counter = 0;
+				sleep 1;
+				next;
+			}
+			# get filenames of files that are used
+			$other_files = [];
+			my $extract_errors = $self->extract_usedfiles(
+				$orig_ltx, $other_files, 'flsfile');
+			$last_change_time_bak = $self->newest_change($other_files);
+			$compile_mode = $self->parse_tex_log($orig_ltx, $tmp_ltx_f, $tmp_ltx_log, $tmp_bib_log, $extract_errors);
+			if(++$compiling_counter>2 and $compile_mode>0){
+				$self->msg(0, 'halt loop for there seem to persist errors/warnings.', 'notice');
+				$compile_mode = 0;
+			}
+			if(compare($tmp_ltx_pdf, $pdf_file)){
+				$self->check_for_pdf_annotations($pdf_file);
+				#sleep 2 if $self->{'pdfviewer'} eq 'okular';
+				if(defined $self->{'pdfviewer'} 
+						and $self->{'pdfviewer'} =~ /^(?:okular|evince)$/){
+					sleep 2;
+					# otherwise copying could be started before reloading of pdf is finished
+				}
+				$self->copyfile($tmp_ltx_pdf, $pdf_file);
+			}
+			$self->msg(1, ''.localtime());
+		}
+	}
+
+	sub load_latex_editor{
+		my $self          = shift;
+		my $files         = [grep {m/\.tex\z/} @{$self->{'usedfiles'}}];
+		my $latex_editors_string = shift;
+		my $latex_editors = [split /\|/, $latex_editors_string];
+		if(not defined $latex_editors_string or @$latex_editors==0 or $latex_editors->[0] eq 'none'){
+			return undef;
+		}
+		$self->msg(2, 'search for latex editor');
+		my $latex_editor = $self->get_first_found_exe($latex_editors);
+		my $pids = $self->get_pids(qr/\Q$latex_editor\E .*\Q$files->[0]\E\b/);
+		# load if not loaded already
+		if(@$pids==0){
+			$self->msg(1, "loading latex editor '$latex_editor'");
+			my $latex_editor_cmd = $latex_editor;
+			$latex_editor_cmd .= ' -p' if $latex_editor =~ /^g?vim\z/;
+			system($latex_editor_cmd . ' ' . (join ' ', @$files) . ' &'); 
+		}else{
+			$self->msg(1, "latex editor '$latex_editor' loaded already");
+		}
+		return $latex_editor;
+	}
+
+	sub load_pdf_viewer{
+		my $self = shift;
+		my $pdfviewers = shift;
+		my $file = $self->{'latexfile'} . '.pdf';
+		if(not defined $pdfviewers or @$pdfviewers==0 or $pdfviewers->[0] eq 'none'){
+			return 0;
+		}
+		$self->msg(2, 'search for pdf viewer');
+		$self->{'pdfviewer'} = $self->get_first_found_exe($pdfviewers);
+		return 0 unless defined $self->{'pdfviewer'};
+		my $pids = $self->get_pids(qr/\Q$self->{'pdfviewer'}\E .*\Q$file\E\b$/);
+		# load if not loaded already
+		if(@$pids == 0){
+			$self->msg(1, "loading pdf viewer '$self->{'pdfviewer'}'");
+			my $pid = fork();
+			defined $pid or die "fork failed; $!\n";
+			if($pid == 0){
+				$self->msg(1, "file $file does not exist, waiting until it exists.") unless -e $file;
+				while(not -e $file){
+					sleep 1;
+				}
+				system("$self->{'pdfviewer'} $file &");
+				exit 0;
+			}
+			return 1;
+		}else{
+			$self->msg(1, "pdf viewer '$self->{'pdfviewer'}' loaded already");
+			return 2;
+		}
+	}
+
+	sub msg{
+		my $self           = shift;
+		my $verb_threshold = shift;
+		my $msg            = shift;
+		my $type           = shift;
+		my $caller_inc     = shift // 0;
+		return 0 if $self->{'verbosity'} < $verb_threshold;
+		$type = (defined $type ? "$type in ": '');
+		my $timestamp = POSIX::strftime("%Y-%m-%d %H:%M:%S", gmtime());
+		# my ($package, $filename, $line, $subr, $has_args, $wantarray, $evaltext, 
+		# $is_require, $hints, $bitmask, $hinthash) = caller(0);
+		my @callers = caller(0 + $caller_inc);
+		my $line = $callers[2];
+		@callers = caller(1 + $caller_inc);
+		my $subr = $callers[3] // '[no sub]';
+		if($self->{'verbosity'} > 1){
+			print "$timestamp $type$subr:$line: ";
+		}else{
+			print "wolf: ";
+		}
+		print "$msg\n";
+		return 1;
+	}
+
+	sub msg_colored{
+		my $self           = shift;
+		my $verb_threshold = shift;
+		my $msg            = shift;
+		my $colors         = shift;
+		return 0 if $self->{'verbosity'} < $verb_threshold;
+		if($self->{'colors'} and defined $colors){
+			print colored [$colors], $msg;
+		}else{
+			print $msg;
+		}
+		return 1;
+	}
+
+	sub newest_change{
+		my $self  = shift;
+		my $files = shift;
+		my $max_date = 0;
+		for my $file(@$files){
+			next unless -e $file;
+			$max_date = (stat $file)[9] if (stat $file)[9] > $max_date;
+		}
+		return $max_date;
+	}
+
+	sub ordered_hash_ref{
+		my $self = shift;
+		tie my %hash, 'Tie::IxHash', @_;
+		return \%hash;
+	}
+
+	sub parse_tex_log{
+		my $self        = shift;
+		my $orig_ltx    = shift;
+		my $tmp_ltx_f   = shift;
+		my $tmp_ltx_log = shift;
+		my $tmp_bib_log = shift;
+		my $extract_errors = shift;
+		my $log = slurp($tmp_ltx_log);
+		my $compile_mode = 0;
+		# cases, where latex-rerun should help
+		$compile_mode |= 1 if $log=~/
+			\QLaTeX\sWarning:\sLabel(s)\smay\shave\schanged.\sRerun\sto\sget\scross-references\sright.\E|
+			pdfTeX\swarning\s\(dest\):\sname\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
+			Package\srerunfilecheck\sWarning:\sFile\s/x;
+		# cases, where bibtex should be used (again)
+		$compile_mode |= 2 if $log=~/(?:LaTeX|Package natbib) Warning: Citation .* on page \d+ undefined on input line/;
+		#$compile_mode |= 2 if $log=~/Package natbib Warning: There were undefined citations/;
+		# cases, where aux-file should be deleted
+		$compile_mode |= 4 if $log=~/
+			!\sPackage\sbabel\sError:\sYou\shaven't\sloaded\sthe\slanguage/x;
+		tie my %msgs, 'Tie::IxHash';
+		%msgs = (
+			'ltx_errs' => {
+				'occs'    => $self->ordered_hash_ref(),
+				'caption' => 'latex errors',
+			},
+			'bib_errs' => {
+				'occs'    => $self->ordered_hash_ref(),
+				'caption' => 'bibtex errors',
+			},
+			'ltx_warnings' => {
+				'occs'    => $self->ordered_hash_ref(),
+				'caption' => 'latex warnings',
+			},
+			'bib_warnings' => {
+				'occs'    => $self->ordered_hash_ref(),
+				'caption' => 'bibtex warnings',
+			},
+			'ltx_hyphen' => {
+				'occs'    => $self->ordered_hash_ref(),
+				'caption' => 'hyphenation problems',
+			},
+			'ltx_boxes' => {
+				'occs'    => $self->ordered_hash_ref(),
+				'caption' => 'over-/underfull boxes',
+			},
+		);
+		my $msg;
+		if($self->{'verbosity'} >= 1){
+			my $biblog = (-e $tmp_bib_log) ? slurp($tmp_bib_log) : undef;
+			print "\n";
+			$self->msg(0, "summary");
+			$self->msg(0, "=======");
+			# over-/underfull boxes
+			$msg = $msgs{'ltx_boxes'}; #`grep -i -E "full .*box" $tmp_ltx_log`;
+			while($log=~/^(?:Over|Under)full .*box.*(?:\n\[\]\\OT1\/.*)?/mgp){
+				++$msg->{'occs'}->{${^MATCH}};
+			}
+			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'notice'});
+			# hyphenation problems
+			$msg = $msgs{'ltx_hyphen'}; # `grep -iA 2 -E "^\\\\T1/" $tmp_ltx_log`;
+			while($log=~/^(?:\\|\[\]\\O)T1(?:.*+[\n\r]+){2}.*/mgp){
+				++$msg->{'occs'}->{${^MATCH}};
+			}
+			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'notice'});
+			# bibtex warnings
+			$msg = $msgs{'bib_warnings'};
+			if(defined $biblog){
+				while($biblog=~/^Warning--.*/mgp){
+					++$msg->{'occs'}->{${^MATCH}};
+				}
+			}
+			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'warn'});
+			# bibtex errors
+			$msg = $msgs{'bib_errs'};
+			if(defined $biblog){
+				while($biblog=~/^.*\berrors?\b.*(?:\n---.*(?:\n :.*)*)?/mgp){
+					next if ${^MATCH} =~/^\(There was (\d+) error messages?\)/;
+					++$msg->{'occs'}->{${^MATCH}};
+				}
+			}
+			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'err'});
+			# warnings
+			$msg = $msgs{'ltx_warnings'}; # `grep -iA 1 warning $tmp_ltx_log`;
+			while($log=~/^(?:Package ([a-zA-Z0-9_-]+) [wW]arning.*(?:\(\1\).*+[\n\r]*)*|.*(?i:warning).*+[\n\r]*.*)/mgp){
+				my $package = $1;
+				next if ${^MATCH} =~/Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
+				my $w = ${^MATCH};
+				$w =~s/\n\n(?:Package .*|[\s()]*$)//s;
+				# maybe warnings continues on next line(s)
+				# space or paranthesis on next line indicate that the warning continues on next line
+				if($log=~/\G(?:\n\x20.+)+/mgcp){ # and $w =~/^Package subfig Warning:/
+					$w .= join ' ', split / *\n */, ${^MATCH};
+				}elsif(defined $package and $log=~/\G(?:\n\($package\).+)+/mgcp){
+					$w .= ${^MATCH};
+				}
+				while($w =~ /[,:]\s*$/){ # comma and colon indicate that the warning continues on next line
+					$log=~/\G\n.*$/mgp;
+					$w .= ${^MATCH};
+				}
+				++$msg->{'occs'}->{$w};
+			}
+			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'warn'});
+			# errors
+			$msg = $msgs{'ltx_errs'}; # `grep -iA 2 -B 1 -E "^!" $tmp_ltx_log`.`grep -iA 1 -B 1 error $tmp_ltx_log`;
+			while($log=~/^(?:
+					Package\s([a-zA-Z0-9_-]+)\s[eE]rror.*(?:\(\1\).*+\s*)*| # package errors
+					!(?:.*\s+){1,3}l\.\d+(?-s:.*)|              # normal errors indicating a line
+					!(?:.*\s+){2}.*|                            # normal errors
+					[^:\n]+\.[^:\n]+:[0-9]+:\x20(?:.+\n){1,3}|  # file:line: errors
+					.*\berror\b.*+\s*.*                         # other errors
+				)/mgxp){
+				my $err = ${^MATCH};
+				$err =~ s/[\n\r]+$//;
+				next if $err =~/Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
+				next if $err =~/file:line:error style messages enabled/;
+				++$msg->{'occs'}->{$err};
+			}
+			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'err'});
+			print "\n";
+			$self->msg(1, 'summary of summary');
+			$self->msg(1, '==================');
+			if(@$extract_errors > 0){
+				$self->msg(1, '');
+				$self->msg(1, 'file reading errors:');
+				map {$self->msg(1, " $_")} @$extract_errors;
+			}
+			for my $m(reverse keys %msgs){
+				if(keys(%{$msgs{$m}->{'occs'}}) > 0){
+					my $first_occ_message = "first of $msgs{$m}->{'caption'}";
+					print "\n";
+					$self->msg(1, $first_occ_message);
+					$self->msg(1, '=' x length($first_occ_message));
+					my $msg = (keys(%{$msgs{$m}->{'occs'}}))[0];
+					$msg =~ s/\Q$self->{'tmp_ltx'}/$self->{'latexfile'}/g;
+					$self->msg_colored(1, "$msg\n", 
+						( substr($m, -4) eq 'errs' ? $self->{'color-def'}{'err'} : 
+							substr($m, -8) eq 'warnings' ? $self->{'color-def'}{'warn'} :
+							$self->{'color-def'}{'notice'})
+					);
+					$self->interprate_error($orig_ltx, $tmp_ltx_f, $m, $msg);
+					print "\n";
+				}
+			}
+			for my $m(reverse values %msgs){
+				$self->msg(1, 
+					sprintf("% 3d $m->{'caption'} ", scalar(keys %{$m->{'occs'}}))
+				);
+			}
+			print "\n";
+		}
+		if(($compile_mode & 2) == 0){
+			$compile_mode |= 2 if keys(%{$msgs{'bib_errs'}->{'occs'}}) + keys(%{$msgs{'bib_warnings'}->{'occs'}})> 0
+		}
+		return $compile_mode;
+	}
+
+	sub print_tex_log_messages{
+		my $self   = shift;
+		my $type   = shift;
+		my $msgs   = shift;
+		my $colors = shift;
+		if(keys %$msgs > 0){
+			print "\n" if $self->{'verbosity'} >= 1;
+			$self->msg(1, $type);
+			$self->msg(1, '='x(length($type)));
+			map {
+				my $msg = $_;
+				$msg =~ s/\Q$self->{'tmp_ltx'}/$self->{'latexfile'}/g;
+				$self->msg_colored(1, $msg . ' ('.$msgs->{$_}."x)\n\n", $colors);
+			} keys %$msgs;
+		}else{
+			#print "\nno $type\n";
+		}
 	}
 }
 
 my $params = syntaxCheck(@ARGV);
-# check latex file
-unless(-e $params->{'latexfile'}.'.tex'){
-	$params->{'latexfile'}=~s/\.tex$//;
-	unless(-e $params->{'latexfile'}.'.tex'){
-		die "wolf error: file '$params->{'latexfile'}.tex' does not exist";
-	}
-}
-# pdf viewer
-my ($pdfviewer, $status_pdfviewer) = load_pdf_viewer(
-	$params->{'latexfile'}.'.pdf', 
-	[split /\|/, $params->{'pdfviewers'}], 
-	$params->{'verbose'}
-);
-if($status_pdfviewer==0 and $params->{'verbose'}>0){
-	print "wolf warning: couldn't load pdf viewer '$pdfviewer'\n";
-}
+my $wolf = Wolf->new({
+	'bibtex_params' => {
+		'min-crossrefs' => $params->{'min-crossrefs'}
+	},
+	'colors'          => $params->{'colors'},
+	'format-output'   => $params->{'format-output'},
+	'latexfile'       => $params->{'latexfile'},
+	'pdfviewers'      => [split /\|/, $params->{'pdfviewers'}],
+	'verbosity'       => $params->{'verbose'},
+});
+
 # check missing files
-my $used_latex_files = [$params->{'latexfile'}.'.tex'];
-my $extract_errors = extract_usedfiles($params->{'latexfile'}.'.tex', undef, $used_latex_files, 'texfile');
-if(@$extract_errors > 0 and $params->{'verbose'}>0){
-	my $tex_content = slurp $params->{'latexfile'}.'.tex';
+my $extract_errors = $wolf->extract_usedfiles(undef, undef, 'texfile');
+if(@$extract_errors > 0 and $params->{'verbose'} > 0){
+	my $tex_content = slurp $wolf->{'latexfile'} . '.tex';
 	unless($tex_content =~/\\graphicspath/){
-		print "\nwarning: following files could not be found by wolf (but they may be found by pdflatex though):\n";
-		map {print " $_\n"} @$extract_errors;
-		print "please press <enter> to continue.\n";
+		print "\n";
+		$wolf->msg(0, 
+			'following files could not be found by wolf (but they may be found by pdflatex though):', 
+			'warning');
+		map {$wolf->msg(0, " $_")} @$extract_errors;
+		$wolf->msg(0, "please press <enter> to continue.");
 		my $dummy = <STDIN>;
 	}
 }
 # text editor
-my $latex_editor = load_latex_editor(
-	[grep {m/\.tex\z/} @$used_latex_files], 
-	$params->{'editors'}, 
-	$params->{'verbose'}
-);
+my $latex_editor = $wolf->load_latex_editor($params->{'editors'});
 # start compiling in a loop
-if($params->{'verbose'}>1){
-	print "wolf: now running pdflatex in a loop. waiting until file ".
-		"'$params->{'latexfile'}' or included files are changed.\n";
-}
-latex_compile($params, $pdfviewer);
+$wolf->msg(2, "now running pdflatex in a loop. waiting until file " .
+	"'$wolf->{'latexfile'}.tex' or included files are changed.");
+$wolf->latex_compile();
 
 __END__
 
@@ -718,8 +1063,13 @@ At the end of compiling a summary of all errors and warnings is printed.
 wolf latexfile [options]
 
   latexfile                latex file to be compiled
-      --pdfviewer=string   pdf viewer to use (default = choose automatically)
+      --colors             use colors on output
       --editor=string      text editor to use (default = choose automatically)
+      --format-output      format output of pdflatex and bibtex
+      --min-crossrefs=int  min-crossrefs param for bibtex
+      --no-colors          don't use colors on output
+      --no-format-output   don't format output of pdflatex and bibtex
+      --pdfviewer=string   pdf viewer to use (default = choose automatically)
 
   -V, --version            display version and exit.
   -h, --help               display brief help
@@ -745,12 +1095,10 @@ wolf mydoc
 
 =over 8
 
-=item B<--pdfviewer>=I<string>
+=item B<--colors>, B<--no-colors>, B<--nocolors>
 
-pdf viewer that shall be used. default: I<string> = choose automatically from one 
-of "kpdf|evince|okular|acroread" whatever is found first.
-
-if I<string> is 'none', then no pdf viewer will be loaded.
+wolf is able to use colors for highlighting errors and warnings
+default = B<--colors>
 
 =item B<--editor>=I<string>
 
@@ -758,6 +1106,31 @@ latex editor that shall be used. default: I<string> = choose automatically from
 one of "gvim|kile" whatever is found first.
 
 if I<string> is 'none', then no editor will be loaded.
+
+=item B<--format-output>, B<--no-format-output>, B<--noformat-output>
+
+wolf is able to re-format the stdout-output of pdflatex and bibtex in a better
+readable way. it then tries to indent lines and reformat line-breaks.
+default = B<--format-output>
+
+=item B<--min-crossrefs>=I<int>
+
+bibtex will automatically add a cross-referenced entry to the bibliography if the 
+number of references using the cross-reference attribute \crossref is equal to or 
+greater than I<int>. if you omit the param, then the default value (normaly 2) 
+of bibtex will be used. some bibliography styles need a modification of this param,
+e.g. for IEEEtran this should be set to 900, according to 
+http://tug.ctan.org/biblio/bibtex/contrib/IEEEtran/IEEEtran_bst_HOWTO.pdf.
+
+wolf tries to detect the bibliography style. if it detects 'IEEEtran', then I<int> 
+will be set automatically to 900, unless you did not set it manually.
+
+=item B<--pdfviewer>=I<string>
+
+pdf viewer that shall be used. default: I<string> = choose automatically from one 
+of "kpdf|evince|okular|acroread" whatever is found first.
+
+if I<string> is 'none', then no pdf viewer will be loaded.
 
 =item B<--version>, B<-V>
 
