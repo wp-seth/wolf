@@ -104,7 +104,7 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.16.20150302';
+$main::VERSION = '1.19.20150708';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -176,13 +176,13 @@ sub syntaxCheck{
 			'pdfviewer'     => undef,
 			'tmp_ltx'       => 'temp_latex_file' . time() . 
 				sprintf('%d', 1_000_000 * rand()),
-			'usedfiles'     => [$params->{'latexfile'} . '.tex'],
+			'usedfiles'     => undef, # will be defined a few lines after
 			'verbosity'     => $params->{'verbosity'} // 1,
 			'color-def'     => {
-				'err'     => 'bold white on_red',
-				'warn'    => 'bold yellow on_black',
-				'notice'  => 'yellow on_black',
-				'err_std' => 'white on_black',
+				'err'            => 'bold white on_red',
+				'warn'           => 'bold yellow on_black',
+				'notice'         => 'yellow on_black',
+				'std_suspicious' => 'white on_black',
 			}
 		}, $class;
 		# check latex file
@@ -193,6 +193,7 @@ sub syntaxCheck{
 				exit 1;
 			}
 		}
+		$self->{'usedfiles'} = [$self->{'latexfile'} . '.tex'];
 		# pdf viewer
 		my $status_pdfviewer = $self->load_pdf_viewer($params->{'pdfviewers'});
 		if($status_pdfviewer == 0){
@@ -250,7 +251,7 @@ sub syntaxCheck{
 		map {s/(?<!\\)(?:\\\\)*\K%.*//} @latex_content;
 		my $latexcontent = join '', @latex_content;
 		while($latexcontent=~/\\bibliography\{(.*?)\}/g){
-			push @$bibfiles, (map {$_.='.bib'} split /\s*,\s*/, $1);
+			push @$bibfiles, (map {$_ .= '.bib'} split /\s*,\s*/, $1);
 		}
 		# check paths of $BIBINPUTS if file is not in current working directory
 		my @bibinputs = split /:/, `kpsewhich --expand-path '\$BIBINPUTS'`;
@@ -357,21 +358,37 @@ sub syntaxCheck{
 							my $cont_line = 0; # line is going to be continued
 							# the last paranthesis of the previous line was a '('
 							my $opening_paren_prev_line = 0; 
+							my $opening_brace_prev_line = 0; 
+							my $opening_chevron_prev_line = 0; 
 							my $prev_line = "\n"; 
 							my $bracket_open = 0; 
 							my $color;
+							my $leave_space = 1;
 							while(<$stdout>){
+#								LOOP: {
+#									print(" digits"), redo LOOP if /\G\d+\b[,.;]?\s*/gc;
+#									print(" lowercase"), redo LOOP
+#									if /\G\p{Ll}+\b[,.;]?\s*/gc;
+#									print(" UPPERCASE"), redo LOOP
+#									if /\G\p{Lu}+\b[,.;]?\s*/gc;
+#									print(" Capitalized"), redo LOOP
+#									if /\G\p{Lu}\p{Ll}+\b[,.;]?\s*/gc;
+#									print(" MiXeD"), redo LOOP if /\G\pL+\b[,.;]?\s*/gc;
+#									print(" alphanumeric"), redo LOOP
+#									if /\G[\p{Alpha}\pN]+\b[,.;]?\s*/gc;
+#									print(" line-noise"), redo LOOP if /\G\W+/gc;
+#									print ". That's all!\n";
+#								}
 								my $line = $_;
+								$self->msg(4, "[new line '" . substr($line, 0, -1) . "']");
 								my $output = '';
 								my $line_was_cont = $cont_line; # line was being continued
 								#next if $prev_line =~ /^\s*$/ and $line =~ /^\s*$/;
 								$prev_line = $line;
-								if($line =~ /pgfcoreshade\.code\.tex/){
-									my $a = 'lalala';
-								}
 								while(length($line) > 0){
+									$self->msg(4, "[present line '" . substr($line, 0, -1) . "']");
 									my $indent = '  ' x $indent_depth;
-									# brackets [x ...]
+									# brackets [x ...], x = int
 									if($bracket_open){
 										$self->msg(4, '[bracket is open]');
 										if($line =~ /\]/){
@@ -379,7 +396,7 @@ sub syntaxCheck{
 											--$indent_depth;
 										}
 										if($line =~ /^(\s*[{<][^{<>}]*)/){
-											$self->msg(4, '[got < or {]');
+											$self->msg(4, '[got < or {]'); # }
 											$line = substr($line, length($1));
 											$output .= $indent.$1;
 											$cont_line = 1;
@@ -387,6 +404,11 @@ sub syntaxCheck{
 										}elsif($line =~ /^([^{<>}]*[>}])/){
 											$line = substr($line, length($1));
 											$output .= "$1\n";
+											$cont_line = 0;
+											$opening_paren_prev_line = 0;
+										}else{ # no [<>{}]
+											$output .= $line;
+											$line = '';
 											$cont_line = 0;
 											$opening_paren_prev_line = 0;
 										}
@@ -407,21 +429,82 @@ sub syntaxCheck{
 										$opening_paren_prev_line = 0;
 									}
 									# latex warning
-									elsif($line =~ /^(LaTeX Warning: .*)$/){
+									elsif($line =~ /^(LaTeX Warning: .*|pdfTeX warning: pdflatex .*)$/){
 										$self->msg(4, '[got latex warning]');
 										$output .= $indent.$1;
 										$line = '';
 										$cont_line = 1;
 										$opening_paren_prev_line = 0;
 									}
-									# ( ... ) ...
-									elsif($line =~ /^( [^()]*+ \( [^()]*+ \) [^()]*+ )/x){
+									# ... ( ... )
+									elsif($line =~ /^([^()]*+ \( [^()]*+ \))/x){
 										$self->msg(4, '[got ()]');
 										$output .= $indent if !$cont_line;
-										$output .= $1;
+										$output .= "$1\n";
 										$line = substr($line, length($1));
-										$cont_line = length($line) > 0 ? 1 : 0;
+										$cont_line = 0;
+										$leave_space = 0;
 										$opening_paren_prev_line = 0;
+									}
+									# < ...
+									elsif($line =~ /^(\s*+)(<\/[a-zA-Z0-9.~+\/-]++)/x){
+										$self->msg(4, '[got <]');
+										$output .= $indent if !$cont_line;
+										$output .= "$2";
+										$line = substr($line, length($1) + length($2));
+										$cont_line = 1;
+										$opening_chevron_prev_line = 1;
+										$leave_space = 0;
+										$opening_paren_prev_line = 0;
+									}
+									# ... >
+									elsif($opening_chevron_prev_line){
+										$self->msg(4, '[expecting >]');
+										if($line =~ /^([a-zA-Z0-9.~+\/-]*+>)/x){ # { for vim
+											$self->msg(4, '[got }]');
+											$output .= $indent if !$cont_line;
+											$output .= "$1\n";
+											$line = substr($line, length($1));
+											$leave_space = 0;
+											$opening_paren_prev_line = 0;
+											$opening_chevron_prev_line = 0;
+											$cont_line = 0;
+										}elsif($line !~ /^\s*$/){
+											$opening_chevron_prev_line = 0;
+											$cont_line = 0;
+										}else{
+											$line = '';
+										}
+									}
+									# { ...
+									elsif($line =~ /^(\s*+)(\{\/[a-zA-Z0-9.~+\/-]++)/x){
+										$self->msg(4, '[got {]'); # } for vim
+										$output .= $indent if !$cont_line;
+										$output .= "$2";
+										$line = substr($line, length($1) + length($2));
+										$cont_line = 1;
+										$opening_brace_prev_line = 1;
+										$leave_space = 0;
+										$opening_paren_prev_line = 0;
+									}
+									# ... }
+									elsif($opening_brace_prev_line){ # { for vim
+										$self->msg(4, '[expecting }]');
+										if($line =~ /^([a-zA-Z0-9.~+\/-]*+\})/x){ # { for vim
+											$self->msg(4, '[got }]');
+											$output .= $indent if !$cont_line;
+											$output .= "$1\n";
+											$line = substr($line, length($1));
+											$leave_space = 0;
+											$opening_paren_prev_line = 0;
+											$opening_brace_prev_line = 0;
+											$cont_line = 0;
+										}elsif($line !~ /^\s*$/){
+											$opening_brace_prev_line = 0;
+											$cont_line = 0;
+										}else{
+											$line = '';
+										}
 									}
 									# ( ...
 									elsif($line =~ /^\s*+\( ( [^()]*+ )/x){
@@ -441,6 +524,7 @@ sub syntaxCheck{
 											$cont_line = 0;
 											$opening_paren_prev_line = 0;
 										}
+										$leave_space = 0;
 									}
 									# ... )
 									elsif($indent_depth > 0 and $line =~ /^([^()]*+) \)/x){
@@ -462,20 +546,35 @@ sub syntaxCheck{
 										$output .= ")\n";
 										$cont_line = 0;
 										$opening_paren_prev_line = 0;
-									}else{
-										$output .= $indent if !$cont_line;
-										$output .= $line;
-										$line = '';
-										$cont_line = 0;
-										$opening_paren_prev_line = 0;
+									}
+									# { ... }
+									#elsif($line =~ /^( [^()]*+ \( [^()]*+ \) [^()]*+ )/x){
+									#	$self->msg(4, '[got ()]');
+									#	$output .= $indent if !$cont_line;
+									#	$output .= $1;
+									#	$line = substr($line, length($1));
+									#	$cont_line = length($line) > 0 ? 1 : 0;
+									#	$opening_paren_prev_line = 0;
+									#}
+									else{
+										if($line !~ /^\s*$/ or $leave_space){
+											$output .= $indent if !$cont_line;
+											$output .= $line;
+											$line = '';
+											$cont_line = 0;
+											$opening_paren_prev_line = 0;
+										}else{
+											$line = '';
+										}
 									}
 								}
+								$leave_space = 1;
 								chomp $output;
 								$output =~ s/\Q$self->{'tmp_ltx'}/$self->{'latexfile'}/g;
 								my $parsed = "$type: ";
 								print $parsed if $line_was_cont == 0;
-								if($output =~ /\b(?:error|warning)\b/i){
-									$color = $self->{'color-def'}{'err_std'};
+								if($output =~ /\b(?i:error|warning)\b|(?:Overfull |Underfull )/){
+									$color = $self->{'color-def'}{'std_suspicious'};
 								}
 								$self->msg_colored(1, '' . (join "\n$parsed", split /\n/, $output), $color);
 								if($cont_line == 0){
@@ -601,12 +700,12 @@ sub syntaxCheck{
 				$interpretation = "command '$command' in line $line of file '$filename' is unknown.\n" . 
 					"maybe the command is misspelled or you didn't load the right package.";
 			}
-			if($error=~/^$err_re Missing \$ inserted.\s+(?:.*\s+){1,3}l.(\d+)/ or 
-				$error=~/^! Extra \}, or forgotten \$.\s+.*\s+l.(\d+)/){
+			if($error =~ /^$err_re Missing \$ inserted.\s+(?:.*\s+){1,3}l.(\d+)/ or 
+				$error =~ /^! Extra \}, or forgotten \$.\s+.*\s+l.(\d+)/){
 				$could_interprate_error = 1;
 				$interpretation = "probably you forgot a dollar-sign (\$) somewhere around line $1.";
 			}
-			if($error=~/^$err_re Argument of \\\@\Ecaption has an extra }.\E.*\s+\\par/s){
+			if($error =~ /^$err_re Argument of \\\@\Qcaption has an extra }.\E.*\s+\\par/s){
 				$could_interprate_error = 1;
 				$interpretation = "maybe you should use '\\newline' instead of '\\\\'.";
 			}
@@ -633,14 +732,15 @@ sub syntaxCheck{
 		my $tmp_ltx_pdf = $tmp_ltx . '.pdf'; # this will be the result and will be copied
 		#                                      over $self->{'latexfile'}.'.pdf'
 		push @unlink_files, $tmp_ltx . $_ for ('.tex', '.log', '.pdf', '.aux', '.bbl', 
-			'.blg', '-blx.bib', '.brf', '.fls', '.loa', '.lof', '.lot', '.nav', '.nlo', 
-			'.run.xml', '.snm', '.toc', '.out');
+			'.blg', '-blx.bib', '.brf', '.fls', '.idx', '.loa', '.lof', '.lot', '.nav', 
+			'.nlo', '.run.xml', '.snm', '.toc', '.out');
 		push @unlink_files, $self->filename2temp($_) for @$orig_btx;
 		unless(defined $self->{'bibtex_params'}->{'min-crossrefs'}){
 			my $bib_styles = $self->extract_bibstyle();
 			# see http://tug.ctan.org/biblio/bibtex/contrib/IEEEtran/IEEEtran_bst_HOWTO.pdf
-			print Dumper $bib_styles if $self->{'verbosity'} >= 3;
+			$self->msg(3, 'found used bibtex styles: '. (join ', ', @$bib_styles));
 			if(grep {$_ eq 'IEEEtran'} @$bib_styles){
+				$self->msg(2, 'setting min-crossrefs to 900');
 				$self->{'bibtex_params'}->{'min-crossrefs'} = 900;
 			}
 		}
@@ -648,11 +748,13 @@ sub syntaxCheck{
 		#                       2 = compile bibtex and latex
 		my $cmdlatex = 'pdflatex';
 		my $compiling_counter = 0;
-		my $complete_latex_command = "$cmdlatex -recorder -file-line-error -shell-escape"
-			. " -interaction=nonstopmode --halt-on-error $tmp_ltx_f";
+		my $complete_latex_command = "$cmdlatex -recorder -file-line-error"
+			. " -shell-escape -interaction=nonstopmode --halt-on-error $tmp_ltx_f";
 		my $mincrossrefs = defined $self->{'bibtex_params'}{'min-crossrefs'} ? 
 			' --min-crossrefs='.$self->{'bibtex_params'}{'min-crossrefs'} : '';
 		my $last_change_time_bak = 0;
+		$self->msg(3, 'now start looping, i.e. initial compilation and afterwards ' .
+			'waiting for file changes');
 		while(1){
 			my $last_change_time = $self->newest_change($other_files);
 			for my $bib(@$orig_btx){
@@ -679,6 +781,7 @@ sub syntaxCheck{
 				# after bibtex actually pdflatex has to be called twice to avoid citation 
 				# warnings. but as the log file is searched for undefined Citations, this 
 				# second call should be unnecessary.
+				$self->msg(3, 'run pdflatex and bibtex');
 				$self->format_std_out([
 					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
 					{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $tmp_ltx",}, 
@@ -692,6 +795,7 @@ sub syntaxCheck{
 				# if latex file or related files have been changed
 				#  compile w/o using bibtex
 				$self->copyfile($orig_ltx, $tmp_ltx_f);
+				$self->msg(3, 'run pdflatex');
 				$self->format_std_out([
 					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
 				]);
@@ -707,7 +811,7 @@ sub syntaxCheck{
 				$orig_ltx, $other_files, 'flsfile');
 			$last_change_time_bak = $self->newest_change($other_files);
 			$compile_mode = $self->parse_tex_log($orig_ltx, $tmp_ltx_f, $tmp_ltx_log, $tmp_bib_log, $extract_errors);
-			if(++$compiling_counter>2 and $compile_mode>0){
+			if(++$compiling_counter > 2 and $compile_mode > 0){
 				$self->msg(0, 'halt loop for there seem to persist errors/warnings.', 'notice');
 				$compile_mode = 0;
 			}
@@ -844,8 +948,8 @@ sub syntaxCheck{
 		my $log = slurp($tmp_ltx_log);
 		my $compile_mode = 0;
 		# cases, where latex-rerun should help
-		$compile_mode |= 1 if $log=~/
-			\QLaTeX\sWarning:\sLabel(s)\smay\shave\schanged.\sRerun\sto\sget\scross-references\sright.\E|
+		$compile_mode |= 1 if $log =~ /
+			LaTeX\sWarning:\sLabel\(s\)\smay\shave\schanged\.\sRerun\sto\sget\scross-references\sright\.|
 			pdfTeX\swarning\s\(dest\):\sname\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
 			Package\srerunfilecheck\sWarning:\sFile\s/x;
 		# cases, where bibtex should be used (again)
