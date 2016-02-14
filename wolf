@@ -732,8 +732,8 @@ sub syntaxCheck{
 		my $tmp_ltx_pdf = $tmp_ltx . '.pdf'; # this will be the result and will be copied
 		#                                      over $self->{'latexfile'}.'.pdf'
 		push @unlink_files, $tmp_ltx . $_ for ('.tex', '.log', '.pdf', '.aux', '.bbl', 
-			'.blg', '-blx.bib', '.brf', '.fls', '.idx', '.loa', '.lof', '.lot', '.nav', 
-			'.nlo', '.run.xml', '.snm', '.toc', '.out');
+			'.blg', '-blx.bib', '.brf', '.fls', '.idx', '.ilg', '.ind', '.loa', '.lof', 
+			'.lot', '.nav', '.nlo', '.run.xml', '.snm', '.toc', '.out');
 		push @unlink_files, $self->filename2temp($_) for @$orig_btx;
 		unless(defined $self->{'bibtex_params'}->{'min-crossrefs'}){
 			my $bib_styles = $self->extract_bibstyle();
@@ -744,8 +744,11 @@ sub syntaxCheck{
 				$self->{'bibtex_params'}->{'min-crossrefs'} = 900;
 			}
 		}
-		my $compile_mode = 0; # 0 = do nothing; 1 = compile latex (without bibtex); 
-		#                       2 = compile bibtex and latex
+		my %compile_mode = (); # () = do nothing; other possibilities:
+		# latex: compile latex (without bibtex); 
+		# bib: compile bibtex and latex
+		# del_aux: delete aux-file
+		# idx: call makeindex
 		my $cmdlatex = 'pdflatex';
 		my $compiling_counter = 0;
 		my $complete_latex_command = "$cmdlatex -recorder -file-line-error"
@@ -759,23 +762,23 @@ sub syntaxCheck{
 			my $last_change_time = $self->newest_change($other_files);
 			for my $bib(@$orig_btx){
 				if(-f $bib){ # if bibtex files exist and have been changed
-					$compile_mode |= 2 if compare($bib, $self->filename2temp($bib));
+					$compile_mode{'bib'} = 1 if compare($bib, $self->filename2temp($bib));
 				}else{
 					$self->msg(0, "file $bib not found", 'error');
 					sleep 1;
 				}
 			}
-			if($compile_mode & 4){ # in some cases the aux file should be deleted
+			# in some cases the aux file should be deleted
+			if($compile_mode{'del_aux'}){ 
 				unlink "$tmp_ltx.aux";
-				$compile_mode ^= 4;
-				$compile_mode |= 1;
+				delete $compile_mode{'del_aux'};
+				$compile_mode{'latex'} = 1;
 			}
-			if($compile_mode & 2){ # compile and use bibtex
+			if($compile_mode{'bib'}){ # compile and use bibtex
 				# copy orig bibtex files to temp bibtex files
 				# copy orig latex file to temp latex file
 				# compile latex file 
 				# use bibtex
-				# create pdf file
 				map {$self->copyfile($_, $self->filename2temp($_))} @$orig_btx;
 				$self->copyfile($orig_ltx, $tmp_ltx_f);
 				# after bibtex actually pdflatex has to be called twice to avoid citation 
@@ -785,16 +788,24 @@ sub syntaxCheck{
 				$self->format_std_out([
 					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
 					{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $tmp_ltx",}, 
-					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
 				]);
-			}elsif($compile_mode & 1
+				$compile_mode{'latex'} = 1;
+			}
+			if($compile_mode{'idx'}){
+				$self->msg(3, 'run makeindex');
+				$self->format_std_out([
+					{'type' => 'makeindex', 'cmd' => "makeindex $tmp_ltx",}, 
+				]);
+				$compile_mode{'latex'} = 1;
+			}
+			if($compile_mode{'latex'}
 				|| compare($orig_ltx, $tmp_ltx_f)
-				|| `find . -newer $tmp_ltx_f`=~/\.(?:cls|sty)$|\/gfx\/.*\.(?:eps|p[dg]f|png|tex)\n/m
+				|| `find . -newer $tmp_ltx_f` =~ /\.(?:cls|sty)$|\/gfx\/.*\.(?:eps|p[dg]f|png|tex)\n/m
 				|| $last_change_time_bak < $last_change_time
 				){
 				# if latex file or related files have been changed
 				#  compile w/o using bibtex
-				$self->copyfile($orig_ltx, $tmp_ltx_f);
+				$self->copyfile($orig_ltx, $tmp_ltx_f) unless $compile_mode{'bib'}; # done already
 				$self->msg(3, 'run pdflatex');
 				$self->format_std_out([
 					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
@@ -810,10 +821,11 @@ sub syntaxCheck{
 			my $extract_errors = $self->extract_usedfiles(
 				$orig_ltx, $other_files, 'flsfile');
 			$last_change_time_bak = $self->newest_change($other_files);
-			$compile_mode = $self->parse_tex_log($orig_ltx, $tmp_ltx_f, $tmp_ltx_log, $tmp_bib_log, $extract_errors);
-			if(++$compiling_counter > 2 and $compile_mode > 0){
+			%compile_mode = $self->parse_tex_log(
+				$orig_ltx, $tmp_ltx_f, $tmp_ltx_log, $tmp_bib_log, $extract_errors);
+			if(++$compiling_counter > 2 and keys(%compile_mode) > 0){
 				$self->msg(0, 'halt loop for there seem to persist errors/warnings.', 'notice');
-				$compile_mode = 0;
+				%compile_mode = ();
 			}
 			if(compare($tmp_ltx_pdf, $pdf_file)){
 				$self->check_for_pdf_annotations($pdf_file);
@@ -946,18 +958,32 @@ sub syntaxCheck{
 		my $tmp_bib_log = shift;
 		my $extract_errors = shift;
 		my $log = slurp($tmp_ltx_log);
-		my $compile_mode = 0;
+		my %compile_mode = ();
 		# cases, where latex-rerun should help
-		$compile_mode |= 1 if $log =~ /
-			LaTeX\sWarning:\sLabel\(s\)\smay\shave\schanged\.\sRerun\sto\sget\scross-references\sright\.|
-			pdfTeX\swarning\s\(dest\):\sname\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
-			Package\srerunfilecheck\sWarning:\sFile\s/x;
+		if($log =~ /
+			LaTeX\sWarning:\s
+				Label\(s\)\smay\shave\schanged\.\sRerun\sto\sget\scross-references\sright\.|
+			pdfTeX\swarning\s\(dest\):\s
+				name\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
+			Package\srerunfilecheck\sWarning:\sFile\s/x
+		){
+			$compile_mode{'latex'} = 1;
+		}
 		# cases, where bibtex should be used (again)
-		$compile_mode |= 2 if $log=~/(?:LaTeX|Package natbib) Warning: Citation .* on page \d+ undefined on input line/;
-		#$compile_mode |= 2 if $log=~/Package natbib Warning: There were undefined citations/;
+		if($log =~ /(?:LaTeX|Package natbib)\s
+			Warning:\sCitation\s.*\son\spage\s\d+\sundefined\son\sinput\sline/x
+			# or $log =~ /Package natbib Warning: There were undefined citations/
+		){
+			$compile_mode{'bib'} = 1;
+		}
 		# cases, where aux-file should be deleted
-		$compile_mode |= 4 if $log=~/
-			!\sPackage\sbabel\sError:\sYou\shaven't\sloaded\sthe\slanguage/x;
+		if($log =~ /!\sPackage\sbabel\sError:\sYou\shaven't\sloaded\sthe\slanguage/x){
+			$compile_mode{'del_aux'} = 1;
+		}
+		# use makeindex if necessary
+		if($log =~ /Writing\sindex\sfile\s$self->{'tmp_ltx'}\.idx/x){
+			$compile_mode{'idx'} = 1;
+		}
 		tie my %msgs, 'Tie::IxHash';
 		%msgs = (
 			'ltx_errs' => {
@@ -1089,10 +1115,14 @@ sub syntaxCheck{
 			}
 			print "\n";
 		}
-		if(($compile_mode & 2) == 0){
-			$compile_mode |= 2 if keys(%{$msgs{'bib_errs'}->{'occs'}}) + keys(%{$msgs{'bib_warnings'}->{'occs'}})> 0
+		unless($compile_mode{'bib'}){
+			if(keys(%{$msgs{'bib_errs'}->{'occs'}}) + 
+				keys(%{$msgs{'bib_warnings'}->{'occs'}}) > 0
+			){
+				$compile_mode{'bib'} = 1;
+			}
 		}
-		return $compile_mode;
+		return %compile_mode;
 	}
 
 	sub print_tex_log_messages{
