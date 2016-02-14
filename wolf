@@ -104,7 +104,7 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.19.20150708';
+$main::VERSION = '1.19.20160214';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
