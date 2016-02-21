@@ -104,7 +104,7 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.19.20160214';
+$main::VERSION = '1.20.20160219';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -307,6 +307,7 @@ sub syntaxCheck{
 		}elsif('texfile'){
 			if(open(my $INFILE, '<', $latexfile)){
 				while(my $line = <$INFILE>){
+					next if $line =~ /^\s*%/; # skip comments, seth 2016-02-19
 					while($line =~ /\\in(?:clude(?:graphics)?|put)\s*
 							(?:\[[^\]]+\]\s*)? \{(.*?)\}/gx){
 						my $filename = 
@@ -345,6 +346,9 @@ sub syntaxCheck{
 		for my $cmd_entry(@$cmd_entries){
 			my $type = $cmd_entry->{'type'};
 			my $cmd = $cmd_entry->{'cmd'};
+			if($self->{'verbosity'} > 1){
+				print "command: $cmd\n";
+			}
 			my $child_pid = open(my $stdout, '-|', "$cmd 2>&1");
 			if($child_pid){
 				if($self->{'verbosity'} > 0){
@@ -754,7 +758,7 @@ sub syntaxCheck{
 		my $complete_latex_command = "$cmdlatex -recorder -file-line-error"
 			. " -shell-escape -interaction=nonstopmode --halt-on-error $tmp_ltx_f";
 		my $mincrossrefs = defined $self->{'bibtex_params'}{'min-crossrefs'} ? 
-			' --min-crossrefs='.$self->{'bibtex_params'}{'min-crossrefs'} : '';
+			' --min-crossrefs=' . $self->{'bibtex_params'}{'min-crossrefs'} : '';
 		my $last_change_time_bak = 0;
 		$self->msg(3, 'now start looping, i.e. initial compilation and afterwards ' .
 			'waiting for file changes');
@@ -779,16 +783,25 @@ sub syntaxCheck{
 				# copy orig latex file to temp latex file
 				# compile latex file 
 				# use bibtex
-				map {$self->copyfile($_, $self->filename2temp($_))} @$orig_btx;
-				$self->copyfile($orig_ltx, $tmp_ltx_f);
-				# after bibtex actually pdflatex has to be called twice to avoid citation 
-				# warnings. but as the log file is searched for undefined Citations, this 
-				# second call should be unnecessary.
-				$self->msg(3, 'run pdflatex and bibtex');
-				$self->format_std_out([
-					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
-					{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $tmp_ltx",}, 
-				]);
+
+				if(@$orig_btx > 0){
+					map {$self->copyfile($_, $self->filename2temp($_))} @$orig_btx;
+					$self->copyfile($orig_ltx, $tmp_ltx_f);
+					# after bibtex actually pdflatex has to be called twice to avoid citation 
+					# warnings. but as the log file is searched for undefined Citations, this 
+					# second call should be unnecessary.
+					$self->msg(3, 'run pdflatex and bibtex');
+					$self->format_std_out([
+						{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
+					]);
+					# separate call, because in some cases bibtex should be called, although 
+					# pdflatex failed.
+					$self->format_std_out([
+						{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $tmp_ltx",}, 
+					]);
+				}else{
+					$self->msg(2, 'there are no bibtex files', 'notice');
+				}
 				$compile_mode{'latex'} = 1;
 			}
 			if($compile_mode{'idx'}){
@@ -1032,7 +1045,7 @@ sub syntaxCheck{
 			# bibtex warnings
 			$msg = $msgs{'bib_warnings'};
 			if(defined $biblog){
-				while($biblog=~/^Warning--.*/mgp){
+				while($biblog=~/^Warning--.*|I found no \\[a-z]+ command---while .*/mgp){
 					++$msg->{'occs'}->{${^MATCH}};
 				}
 			}
@@ -1040,7 +1053,7 @@ sub syntaxCheck{
 			# bibtex errors
 			$msg = $msgs{'bib_errs'};
 			if(defined $biblog){
-				while($biblog=~/^.*\berrors?\b.*(?:\n---.*(?:\n :.*)*)?/mgp){
+				while($biblog =~ /^.*\berrors?\b.*(?:\n---.*(?:\n :.*)*)?/mgp){
 					next if ${^MATCH} =~/^\(There was (\d+) error messages?\)/;
 					++$msg->{'occs'}->{${^MATCH}};
 				}
@@ -1069,7 +1082,7 @@ sub syntaxCheck{
 			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'warn'});
 			# errors
 			$msg = $msgs{'ltx_errs'}; # `grep -iA 2 -B 1 -E "^!" $tmp_ltx_log`.`grep -iA 1 -B 1 error $tmp_ltx_log`;
-			while($log=~/^(?:
+			while($log =~ /^(?:
 					Package\s([a-zA-Z0-9_-]+)\s[eE]rror.*(?:\(\1\).*+\s*)*| # package errors
 					!(?:.*\s+){1,3}l\.\d+(?-s:.*)|              # normal errors indicating a line
 					!(?:.*\s+){2}.*|                            # normal errors
@@ -1078,9 +1091,13 @@ sub syntaxCheck{
 				)/mgxp){
 				my $err = ${^MATCH};
 				$err =~ s/[\n\r]+$//;
-				next if $err =~/Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
-				next if $err =~/file:line:error style messages enabled/;
+				next if $err =~ /Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
+				next if $err =~ /file:line:error style messages enabled/;
 				++$msg->{'occs'}->{$err};
+				# if bbl-error, then bibtex should be used again
+				if($err =~ /\Q$self->{'tmp_ltx'}.bbl/){
+					$compile_mode{'bib'} = 1;
+				}
 			}
 			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'err'});
 			print "\n";
