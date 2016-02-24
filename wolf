@@ -27,6 +27,12 @@ use Pod::Usage;
 #
 # wolf functions
 # ================
+# sub changed_bbl
+# 	checks, whether bbl file has changed
+#
+# sub changed_orig_files
+# 	checks, whether original files have changed
+#
 # sub check_for_pdf_annotations
 # 	show whether pdf annotations exist
 #
@@ -89,9 +95,9 @@ use Pod::Usage;
 #
 
 $| = 1;
-my @unlink_files = ();
+my @_unlink_files = ();
 sub clean{
-	map unlink, @unlink_files;
+	map unlink, @_unlink_files;
 }
 
 sub cleanup{
@@ -104,7 +110,7 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.20.20160219';
+$main::VERSION = '1.21.20160223';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -172,12 +178,16 @@ sub syntaxCheck{
 			'bibtex_params' => $params->{'bibtex_params'},
 			'colors'        => $params->{'colors'},
 			'format-output' => $params->{'format-output'},
-			'latexfile'     => $params->{'latexfile'},
+			'latexfile'     => $params->{'latexfile'}, # .tex extension will be deleted
+			'orig_ltx'      => undef, # orig latex file (with .tex extension), set later
 			'pdfviewer'     => undef,
 			'tmp_ltx'       => 'temp_latex_file' . time() . 
 				sprintf('%d', 1_000_000 * rand()),
+			'tmp_ltx_f'     => undef, # tmp latex file (with .tex extension), set later  
 			'usedfiles'     => undef, # will be defined a few lines after
 			'verbosity'     => $params->{'verbosity'} // 1,
+			'new_bbl'       => undef, # see sub changed_bbl
+			'old_bbl'       => undef, # see sub changed_bbl
 			'color-def'     => {
 				'err'            => 'bold white on_red',
 				'warn'           => 'bold yellow on_black',
@@ -193,13 +203,54 @@ sub syntaxCheck{
 				exit 1;
 			}
 		}
-		$self->{'usedfiles'} = [$self->{'latexfile'} . '.tex'];
+		$self->{'orig_ltx'}  = $self->{'latexfile'} . '.tex';
+		$self->{'tmp_ltx_f'} = $self->{'tmp_ltx'} . '.tex';
+		$self->{'usedfiles'} = [$self->{'orig_ltx'}];
 		# pdf viewer
 		my $status_pdfviewer = $self->load_pdf_viewer($params->{'pdfviewers'});
 		if($status_pdfviewer == 0){
 			$self->msg(1, "couldn't load pdf viewer '$self->{'pdfviewer'}'", 'warning');
 		}
 		return $self;
+	}
+
+	sub changed_bbl{
+		my $self         = shift;
+		my $changed      = 1;
+		# tmp bbl file is used for checking whether bibtex should be called
+		$self->{'new_bbl'} = slurp($self->{'tmp_ltx'} . '.bbl');
+		if(defined $self->{'old_bbl'}){
+			$changed = undef if $self->{'old_bbl'} eq $self->{'new_bbl'};
+			if(defined $changed){
+				$self->msg(1, 'bbl file has changed.')
+			}else{
+				$self->msg(1, 'bbl file has not changed. probably no need to re-run ' . 
+					'latex compiler');
+			}
+		}else{
+			$self->msg(2, 'old bbl content not found, creating...');
+		}
+		$self->{'old_bbl'} = $self->{'new_bbl'};
+		return $changed;
+	}
+
+	sub changed_orig_files{
+		my $self    = shift;
+		my $last_change_time_bak = shift;
+		my $last_change_time     = shift;
+		my $changed = undef;
+		if(compare($self->{'orig_ltx'}, $self->{'tmp_ltx_f'})){
+			$changed = 1;
+			$self->msg(3, 'main tex file has changed');
+		}elsif($last_change_time_bak < $last_change_time){
+			$changed = 1;
+			$self->msg(3, 'last change time has changed');
+		}elsif(`find . -newer $self->{'tmp_ltx_f'}` =~ 
+			/\.(?:cls|sty)$|\/gfx\/.*\.(?:eps|p[dg]f|png|tex)\n/m){
+			$changed = 1;
+			$self->msg(3, 'some used file has changed');
+		}
+		return $changed;
 	}
 
 	sub check_for_pdf_annotations{
@@ -245,9 +296,8 @@ sub syntaxCheck{
 
 	sub extract_bibfiles{ # from latex file, and append extensions '.bib'
 		my $self     = shift;
-		my $orig_ltx = shift;
 		my $bibfiles = [];
-		my @latex_content = grep {!/^\s*%/} slurp $orig_ltx;
+		my @latex_content = grep {!/^\s*%/} slurp $self->{'orig_ltx'};
 		map {s/(?<!\\)(?:\\\\)*\K%.*//} @latex_content;
 		my $latexcontent = join '', @latex_content;
 		while($latexcontent=~/\\bibliography\{(.*?)\}/g){
@@ -283,7 +333,7 @@ sub syntaxCheck{
 
 	sub extract_usedfiles{ # from latex file
 		my $self        = shift;
-		my $latexfile   = shift // $self->{'latexfile'} . '.tex';
+		my $latexfile   = shift // $self->{'orig_ltx'};
 		my $usedfiles   = shift;
 		my $method      = shift // 'flsfile';
 		my $errors = [];
@@ -684,8 +734,6 @@ sub syntaxCheck{
 
 	sub interprate_error{
 		my $self      = shift;
-		my $orig_ltx  = shift;
-		my $tmp_ltx_f = shift;
 		my $type      = shift; # ltx_..., bib_...
 		my $error     = shift;
 		my $could_interprate_error = 0;
@@ -700,7 +748,7 @@ sub syntaxCheck{
 				my $filename = $1;
 				my $line = $2;
 				my $command = $3;
-				$filename = $orig_ltx if $filename =~/\Q$tmp_ltx_f\E$/;
+				$filename = $self->{'orig_ltx'} if $filename =~ /\Q$self->{'tmp_ltx_f'}\E$/;
 				$interpretation = "command '$command' in line $line of file '$filename' is unknown.\n" . 
 					"maybe the command is misspelled or you didn't load the right package.";
 			}
@@ -725,20 +773,13 @@ sub syntaxCheck{
 
 	sub latex_compile{
 		my $self        = shift;
-		my $orig_ltx    = $self->{'latexfile'} . '.tex'; # orig latex file 
-		my $orig_btx    = $self->extract_bibfiles($orig_ltx); # orig bibtex files
-		my $pdf_file    = $self->{'latexfile'} . '.pdf'; # result pdf file
+		my $orig_btx    = $self->extract_bibfiles(); # orig bibtex files
+		my $pdf_file    = $self->{'latexfile'} . '.pdf'; # resulting pdf file
 		my $other_files = [];                        # filenames of files, that are used
-		my $tmp_ltx     = $self->{'tmp_ltx'};
-		my $tmp_ltx_f   = $tmp_ltx . '.tex'; # this file will be used for compiling
-		my $tmp_ltx_log = $tmp_ltx . '.log'; # this file will be used for error parsing
-		my $tmp_bib_log = $tmp_ltx . '.blg'; # this file will be used for error parsing
-		my $tmp_ltx_pdf = $tmp_ltx . '.pdf'; # this will be the result and will be copied
-		#                                      over $self->{'latexfile'}.'.pdf'
-		push @unlink_files, $tmp_ltx . $_ for ('.tex', '.log', '.pdf', '.aux', '.bbl', 
-			'.blg', '-blx.bib', '.brf', '.fls', '.idx', '.ilg', '.ind', '.loa', '.lof', 
-			'.lot', '.nav', '.nlo', '.run.xml', '.snm', '.toc', '.out');
-		push @unlink_files, $self->filename2temp($_) for @$orig_btx;
+		push @_unlink_files, $self->{'tmp_ltx'} . $_ for ('.tex', '.log', '.pdf', 
+			'.aux', '.bbl', '.blg', '-blx.bib', '.brf', '.fls', '.idx', '.ilg', '.ind', 
+			'.loa', '.lof', '.lot', '.nav', '.nlo', '.out', '.run.xml', '.snm', '.toc');
+		push @_unlink_files, $self->filename2temp($_) for @$orig_btx;
 		unless(defined $self->{'bibtex_params'}->{'min-crossrefs'}){
 			my $bib_styles = $self->extract_bibstyle();
 			# see http://tug.ctan.org/biblio/bibtex/contrib/IEEEtran/IEEEtran_bst_HOWTO.pdf
@@ -753,10 +794,9 @@ sub syntaxCheck{
 		# bib: compile bibtex and latex
 		# del_aux: delete aux-file
 		# idx: call makeindex
-		my $cmdlatex = 'pdflatex';
 		my $compiling_counter = 0;
-		my $complete_latex_command = "$cmdlatex -recorder -file-line-error"
-			. " -shell-escape -interaction=nonstopmode --halt-on-error $tmp_ltx_f";
+		my $complete_latex_command = "pdflatex -recorder -file-line-error " . 
+			"-shell-escape -interaction=nonstopmode --halt-on-error $self->{'tmp_ltx_f'}";
 		my $mincrossrefs = defined $self->{'bibtex_params'}{'min-crossrefs'} ? 
 			' --min-crossrefs=' . $self->{'bibtex_params'}{'min-crossrefs'} : '';
 		my $last_change_time_bak = 0;
@@ -774,22 +814,21 @@ sub syntaxCheck{
 			}
 			# in some cases the aux file should be deleted
 			if($compile_mode{'del_aux'}){ 
-				unlink "$tmp_ltx.aux";
+				unlink "$self->{'tmp_ltx'}.aux";
 				delete $compile_mode{'del_aux'};
 				$compile_mode{'latex'} = 1;
+			}elsif(not defined $compile_mode{'latex'} or $compile_mode{'latex'} == 0){
+				$compile_mode{'latex'} = $self->changed_orig_files(
+					$last_change_time_bak, $last_change_time);
 			}
-			if($compile_mode{'bib'}){ # compile and use bibtex
+			if($compile_mode{'bib'} || $compile_mode{'latex'}){ # compile and use bibtex
 				# copy orig bibtex files to temp bibtex files
 				# copy orig latex file to temp latex file
-				# compile latex file 
-				# use bibtex
-
+				# compile latex file to generate aux file
+				# use bibtex on aux file to generate bbl and blg files
 				if(@$orig_btx > 0){
 					map {$self->copyfile($_, $self->filename2temp($_))} @$orig_btx;
-					$self->copyfile($orig_ltx, $tmp_ltx_f);
-					# after bibtex actually pdflatex has to be called twice to avoid citation 
-					# warnings. but as the log file is searched for undefined Citations, this 
-					# second call should be unnecessary.
+					$self->copyfile($self->{'orig_ltx'}, $self->{'tmp_ltx_f'});
 					$self->msg(3, 'run pdflatex and bibtex');
 					$self->format_std_out([
 						{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
@@ -797,33 +836,41 @@ sub syntaxCheck{
 					# separate call, because in some cases bibtex should be called, although 
 					# pdflatex failed.
 					$self->format_std_out([
-						{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $tmp_ltx",}, 
+						{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $self->{'tmp_ltx'}",}, 
 					]);
+					# check, whether bbl file has changed or bibtex-call is forced
+					$compile_mode{'latex'} = $compile_mode{'bib'} ? 1 : $self->changed_bbl();
+					# create initial $self->{'old_bbl'}
+					$self->changed_bbl() unless defined $self->{'old_bbl'};
+					$self->msg(3, "compile mode: " . Dumper(\%compile_mode));
 				}else{
-					$self->msg(2, 'there are no bibtex files', 'notice');
+					if($compile_mode{'bib'}){
+						$self->msg(2, 'there are no bibtex files', 'notice');
+						$compile_mode{'latex'} = 1;
+					}
 				}
-				$compile_mode{'latex'} = 1;
 			}
 			if($compile_mode{'idx'}){
 				$self->msg(3, 'run makeindex');
 				$self->format_std_out([
-					{'type' => 'makeindex', 'cmd' => "makeindex $tmp_ltx",}, 
+					{'type' => 'makeindex', 'cmd' => "makeindex $self->{'tmp_ltx'}",}, 
 				]);
 				$compile_mode{'latex'} = 1;
 			}
-			if($compile_mode{'latex'}
-				|| compare($orig_ltx, $tmp_ltx_f)
-				|| `find . -newer $tmp_ltx_f` =~ /\.(?:cls|sty)$|\/gfx\/.*\.(?:eps|p[dg]f|png|tex)\n/m
-				|| $last_change_time_bak < $last_change_time
-				){
+			if($compile_mode{'latex'} or 
+				$self->changed_orig_files($last_change_time_bak, $last_change_time))
+			{
 				# if latex file or related files have been changed
 				#  compile w/o using bibtex
-				$self->copyfile($orig_ltx, $tmp_ltx_f) unless $compile_mode{'bib'}; # done already
+				$self->copyfile($self->{'orig_ltx'}, $self->{'tmp_ltx_f'}) unless $compile_mode{'bib'}; # done already
+				# after bibtex actually pdflatex has to be called twice to avoid citation 
+				# warnings. but as the log file is searched for undefined citations, this 
+				# second call should be unnecessary.
 				$self->msg(3, 'run pdflatex');
 				$self->format_std_out([
 					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
 				]);
-				# && latex -shell-escape -interaction=nonstopmode --halt-on-error $orig_ltx.tex && dvips $orig_ltx.dvi -o $orig_ltx.ps && ps2pdf $orig_ltx.ps
+				# && latex -shell-escape -interaction=nonstopmode --halt-on-error $self->{'orig_ltx'} && dvips $self->{'latexfile'}.dvi -o $self->{'latexfile'}.ps && ps2pdf $self->{'latexfile'}.ps
 			}else{ # else do nothing
 				$compiling_counter = 0;
 				sleep 1;
@@ -832,23 +879,23 @@ sub syntaxCheck{
 			# get filenames of files that are used
 			$other_files = [];
 			my $extract_errors = $self->extract_usedfiles(
-				$orig_ltx, $other_files, 'flsfile');
+				$self->{'orig_ltx'}, $other_files, 'flsfile');
 			$last_change_time_bak = $self->newest_change($other_files);
-			%compile_mode = $self->parse_tex_log(
-				$orig_ltx, $tmp_ltx_f, $tmp_ltx_log, $tmp_bib_log, $extract_errors);
+			%compile_mode = $self->parse_tex_log($extract_errors);
 			if(++$compiling_counter > 2 and keys(%compile_mode) > 0){
 				$self->msg(0, 'halt loop for there seem to persist errors/warnings.', 'notice');
 				%compile_mode = ();
 			}
-			if(compare($tmp_ltx_pdf, $pdf_file)){
+			# tmp pdf will be the result and will be copied over target pdf
+			if(compare($self->{'tmp_ltx'} . '.pdf', $pdf_file)){
 				$self->check_for_pdf_annotations($pdf_file);
 				#sleep 2 if $self->{'pdfviewer'} eq 'okular';
 				if(defined $self->{'pdfviewer'} 
 						and $self->{'pdfviewer'} =~ /^(?:okular|evince)$/){
-					sleep 2;
-					# otherwise copying could be started before reloading of pdf is finished
+					sleep 2; # some sleep is necessary, because otherwise copying could be 
+					# started before reloading of pdf is finished
 				}
-				$self->copyfile($tmp_ltx_pdf, $pdf_file);
+				$self->copyfile($self->{'tmp_ltx'} . '.pdf', $pdf_file);
 			}
 			$self->msg(1, ''.localtime());
 		}
@@ -952,7 +999,8 @@ sub syntaxCheck{
 		my $max_date = 0;
 		for my $file(@$files){
 			next unless -e $file;
-			$max_date = (stat $file)[9] if (stat $file)[9] > $max_date;
+			my $mod_ts = (stat $file)[9];
+			$max_date = $mod_ts if $mod_ts > $max_date;
 		}
 		return $max_date;
 	}
@@ -964,12 +1012,10 @@ sub syntaxCheck{
 	}
 
 	sub parse_tex_log{
-		my $self        = shift;
-		my $orig_ltx    = shift;
-		my $tmp_ltx_f   = shift;
-		my $tmp_ltx_log = shift;
-		my $tmp_bib_log = shift;
+		my $self           = shift;
 		my $extract_errors = shift;
+		my $tmp_bib_log = $self->{'tmp_ltx'} . '.blg'; # used for error parsing
+		my $tmp_ltx_log = $self->{'tmp_ltx'} . '.log'; # used for error parsing
 		my $log = slurp($tmp_ltx_log);
 		my %compile_mode = ();
 		# cases, where latex-rerun should help
@@ -1045,7 +1091,7 @@ sub syntaxCheck{
 			# bibtex warnings
 			$msg = $msgs{'bib_warnings'};
 			if(defined $biblog){
-				while($biblog=~/^Warning--.*|I found no \\[a-z]+ command---while .*/mgp){
+				while($biblog =~ /^Warning--.*|I found no \\[a-z]+ command---while .*/mgp){
 					++$msg->{'occs'}->{${^MATCH}};
 				}
 			}
@@ -1121,7 +1167,7 @@ sub syntaxCheck{
 							substr($m, -8) eq 'warnings' ? $self->{'color-def'}{'warn'} :
 							$self->{'color-def'}{'notice'})
 					);
-					$self->interprate_error($orig_ltx, $tmp_ltx_f, $m, $msg);
+					$self->interprate_error($m, $msg);
 					print "\n";
 				}
 			}
@@ -1177,7 +1223,7 @@ my $wolf = Wolf->new({
 # check missing files
 my $extract_errors = $wolf->extract_usedfiles(undef, undef, 'texfile');
 if(@$extract_errors > 0 and $params->{'verbose'} > 0){
-	my $tex_content = slurp $wolf->{'latexfile'} . '.tex';
+	my $tex_content = slurp $wolf->{'orig_ltx'};
 	unless($tex_content =~/\\graphicspath/){
 		print "\n";
 		$wolf->msg(0, 
@@ -1192,7 +1238,7 @@ if(@$extract_errors > 0 and $params->{'verbose'} > 0){
 my $latex_editor = $wolf->load_latex_editor($params->{'editors'});
 # start compiling in a loop
 $wolf->msg(2, "now running pdflatex in a loop. waiting until file " .
-	"'$wolf->{'latexfile'}.tex' or included files are changed.");
+	"'$wolf->{'orig_ltx'}' or included files are changed.");
 $wolf->latex_compile();
 
 __END__
