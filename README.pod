@@ -15,8 +15,13 @@ At the end of compiling a summary of all errors and warnings is printed.
 wolf latexfile [options]
 
   latexfile                latex file to be compiled
-      --pdfviewer=string   pdf viewer to use (default = choose automatically)
+      --colors             use colors on output
       --editor=string      text editor to use (default = choose automatically)
+      --format-output      format output of pdflatex and bibtex
+      --min-crossrefs=int  min-crossrefs param for bibtex
+      --no-colors          don't use colors on output
+      --no-format-output   don't format output of pdflatex and bibtex
+      --pdfviewer=string   pdf viewer to use (default = choose automatically)
 
   -V, --version            display version and exit.
   -h, --help               display brief help
@@ -42,12 +47,10 @@ wolf mydoc
 
 =over 8
 
-=item B<--pdfviewer>=I<string>
+=item B<--colors>, B<--no-colors>, B<--nocolors>
 
-pdf viewer that shall be used. default: I<string> = choose automatically from one 
-of "kpdf|evince|okular|acroread" whatever is found first.
-
-if I<string> is 'none', then no pdf viewer will be loaded.
+wolf is able to use colors for highlighting errors and warnings
+default = B<--colors>
 
 =item B<--editor>=I<string>
 
@@ -55,6 +58,31 @@ latex editor that shall be used. default: I<string> = choose automatically from
 one of "gvim|kile" whatever is found first.
 
 if I<string> is 'none', then no editor will be loaded.
+
+=item B<--format-output>, B<--no-format-output>, B<--noformat-output>
+
+wolf is able to re-format the stdout-output of pdflatex and bibtex in a better
+readable way. it then tries to indent lines and reformat line-breaks.
+default = B<--format-output>
+
+=item B<--min-crossrefs>=I<int>
+
+bibtex will automatically add a cross-referenced entry to the bibliography if the 
+number of references using the cross-reference attribute \crossref is equal to or 
+greater than I<int>. if you omit the param, then the default value (normaly 2) 
+of bibtex will be used. some bibliography styles need a modification of this param,
+e.g. for IEEEtran this should be set to 900, according to 
+http://tug.ctan.org/biblio/bibtex/contrib/IEEEtran/IEEEtran_bst_HOWTO.pdf.
+
+wolf tries to detect the bibliography style. if it detects 'IEEEtran', then I<int> 
+will be set automatically to 900, unless you did not set it manually.
+
+=item B<--pdfviewer>=I<string>
+
+pdf viewer that shall be used. default: I<string> = choose automatically from one 
+of "kpdf|evince|okular|acroread" whatever is found first.
+
+if I<string> is 'none', then no pdf viewer will be loaded.
 
 =item B<--version>, B<-V>
 
@@ -90,7 +118,7 @@ same as B<--verbose=1>.
 
 =head1 LICENCE
 
-Copyright (c) 2014, seth
+Copyright (c) 2016, seth
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
