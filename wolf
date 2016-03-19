@@ -10,10 +10,6 @@ use File::Slurp qw/slurp/;
 use Getopt::Long qw(:config bundling);
 use Pod::Usage;
 
-# todo:
-# * cope with changed \bibliography inside of tex-files (extract bibfiles in loop; 
-# check tex-files for \cite-changes)
-
 # global functions
 # ================
 # sub clean
@@ -110,12 +106,13 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.21.20160223';
+$main::VERSION = '1.22.20160317';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
 		'editors'       => 'gvim|kile|kate',              # text editor
 		'colors'        => 1,                             # use colors
+		'gui'           => 1,                             # use some text editor and pdf viewer
 		'format-output' => 1,                             # format std output
 		'min-crossrefs' => undef,                         # bibtex --min-crossrefs
 		'pdfviewers'    => 'kpdf|evince|okular|acroread', # pdf viewers
@@ -124,12 +121,13 @@ sub syntaxCheck{
 	);
 	GetOptions(\%params,
 		"colors!",
-		"editor=s" => sub { $params{'editors'} = $_[1].'|'.$params{'editors'};},
+		"editors=s",# => sub { $params{'editors'} = $_[1].'|'.$params{'editors'};},
 		"format-output!",
+		"gui!",
 		"min-crossrefs=i",
-		"pdfviewer|pdf-viewer=s" => sub {
-			$params{'pdfviewers'} = $_[1].'|'.$params{'pdfviewers'};
-		},
+		"pdfviewers|pdf-viewers=s",# => sub {
+		#	$params{'pdfviewers'} = $_[1].'|'.$params{'pdfviewers'};
+		#},
 		"silent|quiet|q" => sub { $params{'verbose'} = 0;},
 		"very-verbose" => sub { $params{'verbose'} = 2;},
 		"verbose|v:+",
@@ -151,9 +149,13 @@ sub syntaxCheck{
 		}else{
 			print "number of arguments must be at least $additional_params[0] and at " . 
 				"most " . ($additional_params[1] == -1 ? 'inf' : $additional_params[1]) . 
-				", but is " . (0+@ARGV) . ".\n";
+				", but is " . (0 + @ARGV) . ".\n";
 		}
 		pod2usage(-exitval=>2);
+	}
+	if(!$params{'gui'}){
+		$params{'pdfviewers'} = 'none';
+		$params{'editors'} = 'none';
 	}
 	$params{'latexfile'} = $ARGV[0];
 	return \%params;
@@ -208,8 +210,12 @@ sub syntaxCheck{
 		$self->{'usedfiles'} = [$self->{'orig_ltx'}];
 		# pdf viewer
 		my $status_pdfviewer = $self->load_pdf_viewer($params->{'pdfviewers'});
-		if($status_pdfviewer == 0){
-			$self->msg(1, "couldn't load pdf viewer '$self->{'pdfviewer'}'", 'warning');
+		if($status_pdfviewer == -1){
+			$self->msg(1, 'as you wish, no pdf viewer will be loaded.');
+		}elsif($status_pdfviewer == 0){
+			$self->msg(1, 'couldn\'t load any of the given pdf viewers (' . 
+				join(', ', @{$params->{'pdfviewers'}}) . ').', 'warning');
+			sleep 3;
 		}
 		return $self;
 	}
@@ -928,8 +934,8 @@ sub syntaxCheck{
 		my $self = shift;
 		my $pdfviewers = shift;
 		my $file = $self->{'latexfile'} . '.pdf';
-		if(not defined $pdfviewers or @$pdfviewers==0 or $pdfviewers->[0] eq 'none'){
-			return 0;
+		if(not defined $pdfviewers or @$pdfviewers == 0 or $pdfviewers->[0] eq 'none'){
+			return -1;
 		}
 		$self->msg(2, 'search for pdf viewer');
 		$self->{'pdfviewer'} = $self->get_first_found_exe($pdfviewers);
@@ -1260,13 +1266,12 @@ At the end of compiling a summary of all errors and warnings is printed.
 wolf latexfile [options]
 
   latexfile                latex file to be compiled
-      --colors             use colors on output
       --editor=string      text editor to use (default = choose automatically)
-      --format-output      format output of pdflatex and bibtex
       --min-crossrefs=int  min-crossrefs param for bibtex
       --no-colors          don't use colors on output
       --no-format-output   don't format output of pdflatex and bibtex
       --pdfviewer=string   pdf viewer to use (default = choose automatically)
+      --no-gui             short for --pdfviewer=none --editors=none
 
   -V, --version            display version and exit.
   -h, --help               display brief help
@@ -1300,7 +1305,10 @@ default = B<--colors>
 =item B<--editor>=I<string>
 
 latex editor that shall be used. default: I<string> = choose automatically from 
-one of "gvim|kile" whatever is found first.
+one of "gvim|kile|emacs|kate" whatever is found first.
+
+you may choose I<string> as 'emacs' to force trying emacs only or you may choose 
+I<string> as 'gvim|emacs' to try gvim at first, and emacs if gvim can't be loaded
 
 if I<string> is 'none', then no editor will be loaded.
 
@@ -1309,6 +1317,10 @@ if I<string> is 'none', then no editor will be loaded.
 wolf is able to re-format the stdout-output of pdflatex and bibtex in a better
 readable way. it then tries to indent lines and reformat line-breaks.
 default = B<--format-output>
+
+=item B<--no-gui>, B<--nogui>
+
+just a short cut for B<--pdfviewer>=I<none> B<--editor>=I<none>
 
 =item B<--min-crossrefs>=I<int>
 
@@ -1322,10 +1334,14 @@ http://tug.ctan.org/biblio/bibtex/contrib/IEEEtran/IEEEtran_bst_HOWTO.pdf.
 wolf tries to detect the bibliography style. if it detects 'IEEEtran', then I<int> 
 will be set automatically to 900, unless you did not set it manually.
 
-=item B<--pdfviewer>=I<string>
+=item B<--pdfviewer>=I<string>, B<--pdf-viewer>=I<string>
 
 pdf viewer that shall be used. default: I<string> = choose automatically from one 
 of "kpdf|evince|okular|acroread" whatever is found first.
+
+you may choose I<string> as 'okular' to force trying okular only. or you may choose
+I<string> as 'evince|kpdf' to try evince at first and kpdf if evince can't be 
+loaded.
 
 if I<string> is 'none', then no pdf viewer will be loaded.
 
@@ -1363,7 +1379,7 @@ same as B<--verbose=1>.
 
 =head1 LICENCE
 
-Copyright (c) 2014, seth
+Copyright (c) 2016, seth
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
