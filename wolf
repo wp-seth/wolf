@@ -106,7 +106,7 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.22.20160317';
+$main::VERSION = '1.23.20160323';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -767,6 +767,14 @@ sub syntaxCheck{
 				$could_interprate_error = 1;
 				$interpretation = "maybe you should use '\\newline' instead of '\\\\'.";
 			}
+			if($error =~ /^LaTeX Font Warning: Font shape .O[A-Z0-9]{2}\/cm(?:[a-z]+\/)+[a-z]+' in size <.*> not available/s){
+				$could_interprate_error = 1;
+				$interpretation = "try inserting '\\RequirePackage{fix-cm}' _before_ \\documentclass{...}, see <http://tex.stackexchange.com/questions/4824/what-do-these-font-shape-warnings-mean>";
+			}
+			if($error =~ /Package amsmath Warning: Unable to redefine math accent \\vec/s){
+				$could_interprate_error = 1;
+				$interpretation = "try inserting '\\RequirePackage[cmex10]{amsmath}' _before_ \\documentclass{...}, see <http://tex.stackexchange.com/questions/102507/how-to-fix-this-amsmath-warning-about-redefining-vec/251672#251672>";
+			}
 		}elsif($type =~ /^bib_/){
 		}
 		if($could_interprate_error){
@@ -1028,6 +1036,8 @@ sub syntaxCheck{
 		if($log =~ /
 			LaTeX\sWarning:\s
 				Label\(s\)\smay\shave\schanged\.\sRerun\sto\sget\scross-references\sright\.|
+			Package\snatbib\sWarning:\sCitation\(s\)\smay\shave\schanged.\s*\n\s*
+			\(natbib\)\s*Rerun\sto\sget\scitations\scorrect\.|
 			pdfTeX\swarning\s\(dest\):\s
 				name\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
 			Package\srerunfilecheck\sWarning:\sFile\s/x
