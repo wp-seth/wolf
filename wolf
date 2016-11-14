@@ -106,7 +106,7 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.23.20160323';
+$main::VERSION = '1.25.20161109';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -224,19 +224,24 @@ sub syntaxCheck{
 		my $self         = shift;
 		my $changed      = 1;
 		# tmp bbl file is used for checking whether bibtex should be called
-		$self->{'new_bbl'} = slurp($self->{'tmp_ltx'} . '.bbl');
-		if(defined $self->{'old_bbl'}){
-			$changed = undef if $self->{'old_bbl'} eq $self->{'new_bbl'};
-			if(defined $changed){
-				$self->msg(1, 'bbl file has changed.')
+		my $bbl = $self->{'tmp_ltx'} . '.bbl';
+		if(-e $bbl){
+			$self->{'new_bbl'} = slurp($bbl);
+			if(defined $self->{'old_bbl'}){
+				$changed = undef if $self->{'old_bbl'} eq $self->{'new_bbl'};
+				if(defined $changed){
+					$self->msg(1, 'bbl file has changed.')
+				}else{
+					$self->msg(1, 'bbl file has not changed. probably no need to re-run ' . 
+						'latex compiler');
+				}
 			}else{
-				$self->msg(1, 'bbl file has not changed. probably no need to re-run ' . 
-					'latex compiler');
+				$self->msg(2, 'old bbl content not found, creating...');
 			}
+			$self->{'old_bbl'} = $self->{'new_bbl'};
 		}else{
-			$self->msg(2, 'old bbl content not found, creating...');
+			$self->msg(0, 'could not load bbl file', 'warning');
 		}
-		$self->{'old_bbl'} = $self->{'new_bbl'};
 		return $changed;
 	}
 
@@ -329,7 +334,7 @@ sub syntaxCheck{
 		my $used_latex_files = [grep {m/\.tex\z/} @{$self->{'usedfiles'}}];
 		my $bibstyles = [];
 		for my $file(@$used_latex_files){
-			my $content = slurp($file);
+			my $content = slurp($file); # for vim syntax highlighting: {
 			while($content =~ /\\bibliographystyle\s*\{([^}]++)\}/gs){
 				push @$bibstyles, (split /,\s*/, $1);
 			}
@@ -763,7 +768,7 @@ sub syntaxCheck{
 				$could_interprate_error = 1;
 				$interpretation = "probably you forgot a dollar-sign (\$) somewhere around line $1.";
 			}
-			if($error =~ /^$err_re Argument of \\\@\Qcaption has an extra }.\E.*\s+\\par/s){
+			if($error =~ /^$err_re Argument of \\\@\Qcaption has an extra \E\}\..*\s+\\par/s){
 				$could_interprate_error = 1;
 				$interpretation = "maybe you should use '\\newline' instead of '\\\\'.";
 			}
@@ -790,6 +795,7 @@ sub syntaxCheck{
 		my $orig_btx    = $self->extract_bibfiles(); # orig bibtex files
 		my $pdf_file    = $self->{'latexfile'} . '.pdf'; # resulting pdf file
 		my $other_files = [];                        # filenames of files, that are used
+		# the following files will be cleaned up (deleted) when wolf is stopped
 		push @_unlink_files, $self->{'tmp_ltx'} . $_ for ('.tex', '.log', '.pdf', 
 			'.aux', '.bbl', '.blg', '-blx.bib', '.brf', '.fls', '.idx', '.ilg', '.ind', 
 			'.loa', '.lof', '.lot', '.nav', '.nlo', '.out', '.run.xml', '.snm', '.toc');
@@ -822,7 +828,7 @@ sub syntaxCheck{
 				if(-f $bib){ # if bibtex files exist and have been changed
 					$compile_mode{'bib'} = 1 if compare($bib, $self->filename2temp($bib));
 				}else{
-					$self->msg(0, "file $bib not found", 'error');
+					$self->msg(0, "file '$bib' not found", 'error');
 					sleep 1;
 				}
 			}
@@ -840,7 +846,7 @@ sub syntaxCheck{
 				# copy orig latex file to temp latex file
 				# compile latex file to generate aux file
 				# use bibtex on aux file to generate bbl and blg files
-				if(@$orig_btx > 0){
+				if(@$orig_btx > 0){ # if there are bibtex files
 					map {$self->copyfile($_, $self->filename2temp($_))} @$orig_btx;
 					$self->copyfile($self->{'orig_ltx'}, $self->{'tmp_ltx_f'});
 					$self->msg(3, 'run pdflatex and bibtex');
@@ -859,7 +865,7 @@ sub syntaxCheck{
 					$self->msg(3, "compile mode: " . Dumper(\%compile_mode));
 				}else{
 					if($compile_mode{'bib'}){
-						$self->msg(2, 'there are no bibtex files', 'notice');
+						$self->msg(2, 'could not find any bibtex files', 'notice');
 						$compile_mode{'latex'} = 1;
 					}
 				}
@@ -874,9 +880,12 @@ sub syntaxCheck{
 			if($compile_mode{'latex'} or 
 				$self->changed_orig_files($last_change_time_bak, $last_change_time))
 			{
-				# if latex file or related files have been changed
-				#  compile w/o using bibtex
-				$self->copyfile($self->{'orig_ltx'}, $self->{'tmp_ltx_f'}) unless $compile_mode{'bib'}; # done already
+				# if latex file or related files have been changed, then compile w/o using 
+				#  bibtex
+				# copy orig file to tmp file if not done already
+				unless($compile_mode{'bib'}){
+					$self->copyfile($self->{'orig_ltx'}, $self->{'tmp_ltx_f'});
+				}
 				# after bibtex actually pdflatex has to be called twice to avoid citation 
 				# warnings. but as the log file is searched for undefined citations, this 
 				# second call should be unnecessary.
@@ -884,7 +893,9 @@ sub syntaxCheck{
 				$self->format_std_out([
 					{'type' => 'pdflatex', 'cmd' => $complete_latex_command,}, 
 				]);
-				# && latex -shell-escape -interaction=nonstopmode --halt-on-error $self->{'orig_ltx'} && dvips $self->{'latexfile'}.dvi -o $self->{'latexfile'}.ps && ps2pdf $self->{'latexfile'}.ps
+				# && latex -shell-escape -interaction=nonstopmode --halt-on-error 
+				# $self->{'orig_ltx'} && dvips $self->{'latexfile'}.dvi 
+				# -o $self->{'latexfile'}.ps && ps2pdf $self->{'latexfile'}.ps
 			}else{ # else do nothing
 				$compiling_counter = 0;
 				sleep 1;
@@ -897,7 +908,8 @@ sub syntaxCheck{
 			$last_change_time_bak = $self->newest_change($other_files);
 			%compile_mode = $self->parse_tex_log($extract_errors);
 			if(++$compiling_counter > 2 and keys(%compile_mode) > 0){
-				$self->msg(0, 'halt loop for there seem to persist errors/warnings.', 'notice');
+				$self->msg(0, 'halt loop for there seem to persist errors/warnings.', 
+					'notice');
 				%compile_mode = ();
 			}
 			# tmp pdf will be the result and will be copied over target pdf
@@ -912,7 +924,8 @@ sub syntaxCheck{
 				$self->copyfile($self->{'tmp_ltx'} . '.pdf', $pdf_file);
 			}
 			$self->msg(1, ''.localtime());
-		}
+		}# end of endless loop
+		return 1; # useless, I know
 	}
 
 	sub load_latex_editor{
@@ -1038,7 +1051,7 @@ sub syntaxCheck{
 				Label\(s\)\smay\shave\schanged\.\sRerun\sto\sget\scross-references\sright\.|
 			Package\snatbib\sWarning:\sCitation\(s\)\smay\shave\schanged.\s*\n\s*
 			\(natbib\)\s*Rerun\sto\sget\scitations\scorrect\.|
-			pdfTeX\swarning\s\(dest\):\s
+			pdfTeX\swarning\s\(dest\):\s # for vim syntax highlighting {
 				name\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
 			Package\srerunfilecheck\sWarning:\sFile\s/x
 		){
@@ -1094,16 +1107,18 @@ sub syntaxCheck{
 			$self->msg(0, "=======");
 			# over-/underfull boxes
 			$msg = $msgs{'ltx_boxes'}; #`grep -i -E "full .*box" $tmp_ltx_log`;
-			while($log=~/^(?:Over|Under)full .*box.*(?:\n\[\]\\OT1\/.*)?/mgp){
+			while($log =~ /^(?:Over|Under)full .*box.*(?:\n\[\]\\OT1\/.*)?/mgp){
 				++$msg->{'occs'}->{${^MATCH}};
 			}
-			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'notice'});
+			$self->print_tex_log_messages(
+				$msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'notice'});
 			# hyphenation problems
 			$msg = $msgs{'ltx_hyphen'}; # `grep -iA 2 -E "^\\\\T1/" $tmp_ltx_log`;
-			while($log=~/^(?:\\|\[\]\\O)T1(?:.*+[\n\r]+){2}.*/mgp){
+			while($log =~ /^(?:\\|\[\]\\O)T1(?:.*+[\n\r]+){2}.*/mgp){
 				++$msg->{'occs'}->{${^MATCH}};
 			}
-			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'notice'});
+			$self->print_tex_log_messages(
+				$msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'notice'});
 			# bibtex warnings
 			$msg = $msgs{'bib_warnings'};
 			if(defined $biblog){
@@ -1111,37 +1126,44 @@ sub syntaxCheck{
 					++$msg->{'occs'}->{${^MATCH}};
 				}
 			}
-			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'warn'});
+			$self->print_tex_log_messages(
+				$msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'warn'});
 			# bibtex errors
 			$msg = $msgs{'bib_errs'};
 			if(defined $biblog){
 				while($biblog =~ /^.*\berrors?\b.*(?:\n---.*(?:\n :.*)*)?/mgp){
-					next if ${^MATCH} =~/^\(There was (\d+) error messages?\)/;
+					next if ${^MATCH} =~ /^\(There was (\d+) error messages?\)/;
 					++$msg->{'occs'}->{${^MATCH}};
 				}
 			}
-			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'err'});
+			$self->print_tex_log_messages(
+				$msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'err'});
 			# warnings
 			$msg = $msgs{'ltx_warnings'}; # `grep -iA 1 warning $tmp_ltx_log`;
-			while($log=~/^(?:Package ([a-zA-Z0-9_-]+) [wW]arning.*(?:\(\1\).*+[\n\r]*)*|.*(?i:warning).*+[\n\r]*.*)/mgp){
+			while($log =~ /^
+				(?:Package\s([a-zA-Z0-9_-]+)\s[wW]arning.*
+				(?:\(\1\).*+[\n\r]*)*|.*(?i:warning).*+[\n\r]*.*)
+			/xmgp){
 				my $package = $1;
-				next if ${^MATCH} =~/Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
+				next if ${^MATCH} =~ /Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
 				my $w = ${^MATCH};
 				$w =~s/\n\n(?:Package .*|[\s()]*$)//s;
 				# maybe warnings continues on next line(s)
 				# space or paranthesis on next line indicate that the warning continues on next line
-				if($log=~/\G(?:\n\x20.+)+/mgcp){ # and $w =~/^Package subfig Warning:/
+				if($log =~ /\G(?:\n\x20.+)+/mgcp){ # and $w =~/^Package subfig Warning:/
 					$w .= join ' ', split / *\n */, ${^MATCH};
 				}elsif(defined $package and $log=~/\G(?:\n\($package\).+)+/mgcp){
 					$w .= ${^MATCH};
 				}
-				while($w =~ /[,:]\s*$/){ # comma and colon indicate that the warning continues on next line
+				# comma and colon indicate that the warning continues on next line
+				while($w =~ /[,:]\s*$/){
 					$log=~/\G\n.*$/mgp;
 					$w .= ${^MATCH};
 				}
 				++$msg->{'occs'}->{$w};
 			}
-			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'warn'});
+			$self->print_tex_log_messages(
+				$msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'warn'});
 			# errors
 			$msg = $msgs{'ltx_errs'}; # `grep -iA 2 -B 1 -E "^!" $tmp_ltx_log`.`grep -iA 1 -B 1 error $tmp_ltx_log`;
 			while($log =~ /^(?:
@@ -1161,7 +1183,8 @@ sub syntaxCheck{
 					$compile_mode{'bib'} = 1;
 				}
 			}
-			$self->print_tex_log_messages($msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'err'});
+			$self->print_tex_log_messages(
+				$msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'err'});
 			print "\n";
 			$self->msg(1, 'summary of summary');
 			$self->msg(1, '==================');
@@ -1296,12 +1319,12 @@ wolf latexfile [options]
 
 =head1 EXAMPLES
 
-wolf mydoc.tex
-  starts gvim (if found), starts kpdf, evince, ocular or acroread (whatever is 
-  found first), starts compiling mydoc.tex on every change.
+  wolf mydoc.tex
+    starts gvim (if found), starts kpdf, evince, ocular or acroread (whatever is 
+    found first), starts compiling mydoc.tex on every change.
 
-wolf mydoc
-  same as above
+  wolf mydoc
+    same as above
 
 =head1 OPTIONS
 
