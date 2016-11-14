@@ -177,25 +177,27 @@ sub syntaxCheck{
 		my $class = shift;
 		my $params = shift;
 		my $self = bless {
-			'bibtex_params' => $params->{'bibtex_params'},
-			'colors'        => $params->{'colors'},
-			'format-output' => $params->{'format-output'},
-			'latexfile'     => $params->{'latexfile'}, # .tex extension will be deleted
-			'orig_ltx'      => undef, # orig latex file (with .tex extension), set later
-			'pdfviewer'     => undef,
-			'tmp_ltx'       => 'temp_latex_file' . time() . 
-				sprintf('%d', 1_000_000 * rand()),
-			'tmp_ltx_f'     => undef, # tmp latex file (with .tex extension), set later  
-			'usedfiles'     => undef, # will be defined a few lines after
-			'verbosity'     => $params->{'verbosity'} // 1,
-			'new_bbl'       => undef, # see sub changed_bbl
-			'old_bbl'       => undef, # see sub changed_bbl
-			'color-def'     => {
+			'bibtex_params'   => $params->{'bibtex_params'},
+			'color-def'       => {
 				'err'            => 'bold white on_red',
 				'warn'           => 'bold yellow on_black',
 				'notice'         => 'yellow on_black',
 				'std_suspicious' => 'white on_black',
-			}
+			},
+			'colors'          => $params->{'colors'},
+			'format-output'   => $params->{'format-output'},
+			'files-not-found' => [],
+			'latexfile'       => $params->{'latexfile'}, # .tex extension will be deleted
+			'max_line_len'    => 73, # maximum line length in latex log file
+			'new_bbl'         => undef, # see sub changed_bbl
+			'old_bbl'         => undef, # see sub changed_bbl
+			'orig_ltx'        => undef, # orig latex file (with .tex extension), set later
+			'pdfviewer'       => undef,
+			'tmp_ltx'         => 'temp_latex_file' . time() . 
+				sprintf('%d', 1_000_000 * rand()),
+			'tmp_ltx_f'       => undef, # tmp latex file (with .tex extension), set later  
+			'usedfiles'       => undef, # will be defined a few lines after
+			'verbosity'       => $params->{'verbosity'} // 1,
 		}, $class;
 		# check latex file
 		unless(-e $self->{'latexfile'}.'.tex'){
@@ -838,8 +840,18 @@ sub syntaxCheck{
 				delete $compile_mode{'del_aux'};
 				$compile_mode{'latex'} = 1;
 			}elsif(not defined $compile_mode{'latex'} or $compile_mode{'latex'} == 0){
+				# check whether original source files have been changed
 				$compile_mode{'latex'} = $self->changed_orig_files(
 					$last_change_time_bak, $last_change_time);
+				# check whether missing files are there now
+				for my $fnf(@{$self->{'files-not-found'}}){
+					if(-e $fnf){
+						$self->msg(1, "found missing file '$fnf'");
+						$compile_mode{'latex'} = 1;
+						# fnf-array will be reset and rebuilt in parse_tex_log
+						last;
+					}
+				}
 			}
 			if($compile_mode{'bib'} || $compile_mode{'latex'}){ # compile and use bibtex
 				# copy orig bibtex files to temp bibtex files
@@ -898,6 +910,7 @@ sub syntaxCheck{
 				# -o $self->{'latexfile'}.ps && ps2pdf $self->{'latexfile'}.ps
 			}else{ # else do nothing
 				$compiling_counter = 0;
+				$self->msg(5, 'now sleep 1 and goto loop begin');
 				sleep 1;
 				next;
 			}
@@ -1072,6 +1085,9 @@ sub syntaxCheck{
 		if($log =~ /Writing\sindex\sfile\s$self->{'tmp_ltx'}\.idx/x){
 			$compile_mode{'idx'} = 1;
 		}
+		# the following major part searches the log for errors, warnings, ...
+		# furthermore file-not-found errors are collected
+		$self->{'files-not-found'} = [];
 		tie my %msgs, 'Tie::IxHash';
 		%msgs = (
 			'ltx_errs' => {
@@ -1141,13 +1157,13 @@ sub syntaxCheck{
 			# warnings
 			$msg = $msgs{'ltx_warnings'}; # `grep -iA 1 warning $tmp_ltx_log`;
 			while($log =~ /^
-				(?:Package\s([a-zA-Z0-9_-]+)\s[wW]arning.*
-				(?:\(\1\).*+[\n\r]*)*|.*(?i:warning).*+[\n\r]*.*)
+				(?:Package\s([a-zA-Z0-9_-]+)\s[wW]arning.*(?:\(\1\).*+[\n\r]*)*|
+				.*(?i:warning).*+[\n\r]*.*)
 			/xmgp){
 				my $package = $1;
 				next if ${^MATCH} =~ /Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
 				my $w = ${^MATCH};
-				$w =~s/\n\n(?:Package .*|[\s()]*$)//s;
+				$w =~ s/\n\n(?:Package .*|[\s()]*$)//s;
 				# maybe warnings continues on next line(s)
 				# space or paranthesis on next line indicate that the warning continues on next line
 				if($log =~ /\G(?:\n\x20.+)+/mgcp){ # and $w =~/^Package subfig Warning:/
@@ -1159,6 +1175,10 @@ sub syntaxCheck{
 				while($w =~ /[,:]\s*$/){
 					$log=~/\G\n.*$/mgp;
 					$w .= ${^MATCH};
+				}
+				# collect unfindable files
+				if($w =~ /LaTeX Warning: File `([^']+)' not found/ && 0 == grep {$1 eq $_} @{$self->{'files-not-found'}}){
+					push @{$self->{'files-not-found'}}, $1;
 				}
 				++$msg->{'occs'}->{$w};
 			}
@@ -1177,6 +1197,16 @@ sub syntaxCheck{
 				$err =~ s/[\n\r]+$//;
 				next if $err =~ /Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
 				next if $err =~ /file:line:error style messages enabled/;
+				# collect unfindable files
+				if($err =~ /^(.*\sError:\sFile\s`)([^']+)'\snot\sfound\b/s){
+					my $fnf_pre = $1;
+					my $fnf = $2;
+					print "$fnf_pre$fnf\n";
+					$fnf =~ s/^(.*)\n/$1 . ' 'x($self->{'max_line_len'}-length($fnf_pre . $1))/egm;
+					if(0 == grep {$fnf eq $_} @{$self->{'files-not-found'}}){
+						push @{$self->{'files-not-found'}}, $fnf;
+					}
+				}
 				++$msg->{'occs'}->{$err};
 				# if bbl-error, then bibtex should be used again
 				if($err =~ /\Q$self->{'tmp_ltx'}.bbl/){
