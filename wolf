@@ -106,7 +106,7 @@ $SIG{'TERM'} = \&cleanup;
 $SIG{'KILL'} = \&cleanup;
 $SIG{'__DIE__'} = \&clean;
 
-$main::VERSION = '1.25.20161109';
+$main::VERSION = '1.26.20170323';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -800,7 +800,8 @@ sub syntaxCheck{
 		# the following files will be cleaned up (deleted) when wolf is stopped
 		push @_unlink_files, $self->{'tmp_ltx'} . $_ for ('.tex', '.log', '.pdf', 
 			'.aux', '.bbl', '.blg', '-blx.bib', '.brf', '.fls', '.idx', '.ilg', '.ind', 
-			'.loa', '.lof', '.lot', '.nav', '.nlo', '.out', '.run.xml', '.snm', '.toc');
+			'.loa', '.lof', '.lot', '.nav', '.nlo', '.out', '.run.xml', '.snm', '.tdo', 
+			'.toc');
 		push @_unlink_files, $self->filename2temp($_) for @$orig_btx;
 		unless(defined $self->{'bibtex_params'}->{'min-crossrefs'}){
 			my $bib_styles = $self->extract_bibstyle();
