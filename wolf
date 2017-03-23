@@ -1066,6 +1066,8 @@ sub syntaxCheck{
 				Label\(s\)\smay\shave\schanged\.\sRerun\sto\sget\scross-references\sright\.|
 			Package\snatbib\sWarning:\sCitation\(s\)\smay\shave\schanged.\s*\n\s*
 			\(natbib\)\s*Rerun\sto\sget\scitations\scorrect\.|
+			Package\slineno\sWarning:\sLinenumber\sreference\sfailed,\s*\n\s*
+			\(lineno\)\s*rerun\sto\sget\sit\sright\.|
 			pdfTeX\swarning\s\(dest\):\s # for vim syntax highlighting {
 				name\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
 			Package\srerunfilecheck\sWarning:\sFile\s/x
