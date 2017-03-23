@@ -979,6 +979,7 @@ sub syntaxCheck{
 		# load if not loaded already
 		if(@$pids == 0){
 			$self->msg(1, "loading pdf viewer '$self->{'pdfviewer'}'");
+			$SIG{'CHILD'} = 'IGNORE'; # avoid creating zombie child
 			my $pid = fork();
 			defined $pid or die "fork failed; $!\n";
 			if($pid == 0){
