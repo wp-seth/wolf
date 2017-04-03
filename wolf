@@ -12,10 +12,10 @@ use Pod::Usage;
 
 # global functions
 # ================
-# sub clean
+# sub _clean
 # 	delete temp files
 #
-# sub cleanup
+# sub _cleanup
 # 	run clean and exit
 #
 # sub syntaxCheck
@@ -92,25 +92,26 @@ use Pod::Usage;
 
 $| = 1;
 my @_unlink_files = ();
-sub clean{
+sub _clean{
 	map unlink, @_unlink_files;
 }
 
-sub cleanup{
-	clean();
+sub _cleanup{
+	_clean();
 	exit 1;
 }
 
-$SIG{'INT'} = \&cleanup;
-$SIG{'TERM'} = \&cleanup;
-$SIG{'KILL'} = \&cleanup;
-$SIG{'__DIE__'} = \&clean;
+$SIG{'INT'} = \&_cleanup;
+$SIG{'TERM'} = \&_cleanup;
+$SIG{'KILL'} = \&_cleanup;
+$SIG{'__DIE__'} = \&_clean;
 
-$main::VERSION = '1.26.20170323';
+$main::VERSION = '1.27.20170403';
 
 sub syntaxCheck{
 	my %params = ( # default cli params
 		'editors'       => 'gvim|kile|kate',              # text editor
+		'exit'          => 0,                             # exit after compilation
 		'colors'        => 1,                             # use colors
 		'gui'           => 1,                             # use some text editor and pdf viewer
 		'format-output' => 1,                             # format std output
@@ -122,6 +123,7 @@ sub syntaxCheck{
 	GetOptions(\%params,
 		"colors!",
 		"editors=s",# => sub { $params{'editors'} = $_[1].'|'.$params{'editors'};},
+		"exit",
 		"format-output!",
 		"gui!",
 		"min-crossrefs=i",
@@ -177,6 +179,7 @@ sub syntaxCheck{
 		my $class = shift;
 		my $params = shift;
 		my $self = bless {
+			'biber'           => 0, # if 1 use biber
 			'bibtex_params'   => $params->{'bibtex_params'},
 			'color-def'       => {
 				'err'            => 'bold white on_red',
@@ -189,6 +192,7 @@ sub syntaxCheck{
 			'files-not-found' => [],
 			'latexfile'       => $params->{'latexfile'}, # .tex extension will be deleted
 			'max_line_len'    => 73, # maximum line length in latex log file
+			'no_cont'         => $params->{'no_cont'} // 0, # if 1 then exit after compile
 			'new_bbl'         => undef, # see sub changed_bbl
 			'old_bbl'         => undef, # see sub changed_bbl
 			'orig_ltx'        => undef, # orig latex file (with .tex extension), set later
@@ -313,8 +317,26 @@ sub syntaxCheck{
 		my @latex_content = grep {!/^\s*%/} slurp $self->{'orig_ltx'};
 		map {s/(?<!\\)(?:\\\\)*\K%.*//} @latex_content;
 		my $latexcontent = join '', @latex_content;
-		while($latexcontent=~/\\bibliography\{(.*?)\}/g){
+		# \bibliography seems to add .bib, right?
+		while($latexcontent =~ /\\bibliography\{(.*?)\}/g){
 			push @$bibfiles, (map {$_ .= '.bib'} split /\s*,\s*/, $1);
+		}
+		# \addbibresource seems to need .bib, right?
+		while($latexcontent =~ /\\addbibresource\{(.*?)\}/g){
+			$self->{'biber'} = 1;
+			push @$bibfiles, (split /\s*,\s*/, $1);
+		}
+		if($self->{'biber'} == 0 
+			&& $latexcontent =~ /\\usepackage(?:\[[^\]]*\])\{[^}]+\bbiblatex\b/s){
+			$self->{'biber'} = 1;
+		}
+		if($self->{'biber'} > 0){
+			$self->msg(1, 'using biber instead of bibtex');
+			unless(`which biber`){
+				$self->msg(0, 'could not find biber, ' 
+					. 'but biber seems to be needed to compile the bibliography', 'error');
+				$self->{'biber'} = 0;
+			}
 		}
 		# check paths of $BIBINPUTS if file is not in current working directory
 		my @bibinputs = split /:/, `kpsewhich --expand-path '\$BIBINPUTS'`;
@@ -650,7 +672,7 @@ sub syntaxCheck{
 								}
 							}
 						}else{
-							# bibtex or other cmds
+							# bibtex, biber or other cmds
 							while(<$stdout>){
 								print "$type: $_";
 							}
@@ -799,9 +821,9 @@ sub syntaxCheck{
 		my $other_files = [];                        # filenames of files, that are used
 		# the following files will be cleaned up (deleted) when wolf is stopped
 		push @_unlink_files, $self->{'tmp_ltx'} . $_ for ('.tex', '.log', '.pdf', 
-			'.aux', '.bbl', '.blg', '-blx.bib', '.brf', '.fls', '.idx', '.ilg', '.ind', 
-			'.loa', '.lof', '.lot', '.nav', '.nlo', '.out', '.run.xml', '.snm', '.tdo', 
-			'.toc');
+			'.aux', '.bcf', '.bbl', '.blg', '-blx.bib', '.brf', '.fls', '.idx', '.ilg',
+			'.ind', '.loa', '.lof', '.lot', '.nav', '.nlo', '.out', '.run.xml', '.snm', 
+			'.tdo', '.toc');
 		push @_unlink_files, $self->filename2temp($_) for @$orig_btx;
 		unless(defined $self->{'bibtex_params'}->{'min-crossrefs'}){
 			my $bib_styles = $self->extract_bibstyle();
@@ -868,9 +890,17 @@ sub syntaxCheck{
 					]);
 					# separate call, because in some cases bibtex should be called, although 
 					# pdflatex failed.
-					$self->format_std_out([
-						{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $self->{'tmp_ltx'}",}, 
-					]);
+					# distinguish between bibtex and biber
+					if($self->{'biber'} == 1){
+						$mincrossrefs =~ s/min\K-(?=crossrefs)//; # param name differs in biber
+						$self->format_std_out([
+							{'type' => 'biber', 'cmd' => "biber$mincrossrefs $self->{'tmp_ltx'}",}, 
+						]);
+					}else{
+						$self->format_std_out([
+							{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $self->{'tmp_ltx'}",}, 
+						]);
+					}
 					# check, whether bbl file has changed or bibtex-call is forced
 					$compile_mode{'latex'} = $compile_mode{'bib'} ? 1 : $self->changed_bbl();
 					# create initial $self->{'old_bbl'}
@@ -911,6 +941,7 @@ sub syntaxCheck{
 				# -o $self->{'latexfile'}.ps && ps2pdf $self->{'latexfile'}.ps
 			}else{ # else do nothing
 				$compiling_counter = 0;
+				last if $self->{'no_cont'};
 				$self->msg(5, 'now sleep 1 and goto loop begin');
 				sleep 1;
 				next;
@@ -979,7 +1010,7 @@ sub syntaxCheck{
 		# load if not loaded already
 		if(@$pids == 0){
 			$self->msg(1, "loading pdf viewer '$self->{'pdfviewer'}'");
-			$SIG{'CHILD'} = 'IGNORE'; # avoid creating zombie child
+			$SIG{'CHLD'} = 'IGNORE'; # avoid creating zombie child
 			my $pid = fork();
 			defined $pid or die "fork failed; $!\n";
 			if($pid == 0){
@@ -1287,6 +1318,7 @@ my $wolf = Wolf->new({
 		'min-crossrefs' => $params->{'min-crossrefs'}
 	},
 	'colors'          => $params->{'colors'},
+	'no_cont'         => $params->{'exit'},
 	'format-output'   => $params->{'format-output'},
 	'latexfile'       => $params->{'latexfile'},
 	'pdfviewers'      => [split /\|/, $params->{'pdfviewers'}],
@@ -1313,6 +1345,7 @@ my $latex_editor = $wolf->load_latex_editor($params->{'editors'});
 $wolf->msg(2, "now running pdflatex in a loop. waiting until file " .
 	"'$wolf->{'orig_ltx'}' or included files are changed.");
 $wolf->latex_compile();
+_clean;
 
 __END__
 
@@ -1335,6 +1368,7 @@ wolf latexfile [options]
   latexfile                latex file to be compiled
       --editor=string      text editor to use (default = choose automatically)
       --min-crossrefs=int  min-crossrefs param for bibtex
+      --exit               exit after compilation (default: continue until ctrl-c)
       --no-colors          don't use colors on output
       --no-format-output   don't format output of pdflatex and bibtex
       --pdfviewer=string   pdf viewer to use (default = choose automatically)
@@ -1378,6 +1412,11 @@ you may choose I<string> as 'emacs' to force trying emacs only or you may choose
 I<string> as 'gvim|emacs' to try gvim at first, and emacs if gvim can't be loaded
 
 if I<string> is 'none', then no editor will be loaded.
+
+=item B<--exit>
+
+by default wolf will run in an endless loop. with setting --exit you can force wolf 
+to exit after compilation
 
 =item B<--format-output>, B<--no-format-output>, B<--noformat-output>
 
