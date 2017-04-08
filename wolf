@@ -196,6 +196,7 @@ sub syntaxCheck{
 			'new_bbl'         => undef, # see sub changed_bbl
 			'old_bbl'         => undef, # see sub changed_bbl
 			'orig_ltx'        => undef, # orig latex file (with .tex extension), set later
+			'exit_value'      => 0,
 			'pdfviewer'       => undef,
 			'tmp_ltx'         => 'temp_latex_file' . time() . 
 				sprintf('%d', 1_000_000 * rand()),
@@ -684,7 +685,9 @@ sub syntaxCheck{
 				# child should just die
 				exit;
 			}
-			last if $? !=0;
+			$self->{'exit_value'} = $?;
+			$self->msg(4, 'last value: ' . $self->{'exit_value'});
+			last if $? != 0;
 		} # end for @$cmd_entries
 	}
 
@@ -1346,6 +1349,7 @@ $wolf->msg(2, "now running pdflatex in a loop. waiting until file " .
 	"'$wolf->{'orig_ltx'}' or included files are changed.");
 $wolf->latex_compile();
 _clean;
+exit ($wolf->{'exit_value'} == 0 ? 0 : 1);
 
 __END__
 
