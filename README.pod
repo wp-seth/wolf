@@ -17,6 +17,7 @@ wolf latexfile [options]
   latexfile                latex file to be compiled
       --editor=string      text editor to use (default = choose automatically)
       --min-crossrefs=int  min-crossrefs param for bibtex
+      --exit               exit after compilation (default: continue until ctrl-c)
       --no-colors          don't use colors on output
       --no-format-output   don't format output of pdflatex and bibtex
       --pdfviewer=string   pdf viewer to use (default = choose automatically)
@@ -35,12 +36,12 @@ wolf latexfile [options]
 
 =head1 EXAMPLES
 
-wolf mydoc.tex
-  starts gvim (if found), starts kpdf, evince, ocular or acroread (whatever is 
-  found first), starts compiling mydoc.tex on every change.
+  wolf mydoc.tex
+    starts gvim (if found), starts kpdf, evince, ocular or acroread (whatever is 
+    found first), starts compiling mydoc.tex on every change.
 
-wolf mydoc
-  same as above
+  wolf mydoc
+    same as above
 
 =head1 OPTIONS
 
@@ -60,6 +61,11 @@ you may choose I<string> as 'emacs' to force trying emacs only or you may choose
 I<string> as 'gvim|emacs' to try gvim at first, and emacs if gvim can't be loaded
 
 if I<string> is 'none', then no editor will be loaded.
+
+=item B<--exit>
+
+by default wolf will run in an endless loop. with setting --exit you can force wolf 
+to exit after compilation
 
 =item B<--format-output>, B<--no-format-output>, B<--noformat-output>
 
