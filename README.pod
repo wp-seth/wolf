@@ -89,13 +89,20 @@ http://tug.ctan.org/biblio/bibtex/contrib/IEEEtran/IEEEtran_bst_HOWTO.pdf.
 wolf tries to detect the bibliography style. if it detects 'IEEEtran', then I<int> 
 will be set automatically to 900, unless you did not set it manually.
 
+=item B<--pdflatex-output>, B<--no-pdflatex-output>, B<--nopdflatex-output>
+
+if B<--no-pdflatex-output> is set, pdflatex's output will not be displayed, except 
+for summary of errors/warnings
+
+default = B<--pdflatex-output>
+
 =item B<--pdfviewer>=I<string>, B<--pdf-viewer>=I<string>
 
 pdf viewer that shall be used. default: I<string> = choose automatically from one 
-of "kpdf|evince|okular|acroread" whatever is found first.
+of "evince|kpdf|okular|acroread" whatever is found first.
 
 you may choose I<string> as 'okular' to force trying okular only. or you may choose
-I<string> as 'evince|kpdf' to try evince at first and kpdf if evince can't be 
+I<string> as 'kpdf|evince' to try kpdf at first and evince only if kpdf can't be 
 loaded.
 
 if I<string> is 'none', then no pdf viewer will be loaded.
