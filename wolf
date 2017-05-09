@@ -48,7 +48,10 @@ use Pod::Usage;
 # 	generate temp filename from orig filename
 #
 # sub format_std_out
-# 	get errors and warnings from tex log; returns compile mode
+# 	get errors and warnings from stdout; returns compile mode
+#
+# sub format_std_out_pdflatex
+# 	get errors and warnings from tex output; used by format_std_out
 #
 # sub get_first_found_exe
 # 	search path for a given number of executable files. break on first found file.
@@ -106,7 +109,7 @@ $SIG{'TERM'} = \&_cleanup;
 $SIG{'KILL'} = \&_cleanup;
 $SIG{'__DIE__'} = \&_clean;
 
-$main::VERSION = '1.27.20170403';
+$main::VERSION = '1.28.0'; # 20170509
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -444,234 +447,7 @@ sub syntaxCheck{
 						}
 					}else{
 						if($type eq 'pdflatex'){
-							my $indent_depth = 0;
-							my $cont_line = 0; # line is going to be continued
-							# the last paranthesis of the previous line was a '('
-							my $opening_paren_prev_line = 0; 
-							my $opening_brace_prev_line = 0; 
-							my $opening_chevron_prev_line = 0; 
-							my $prev_line = "\n"; 
-							my $bracket_open = 0; 
-							my $color;
-							my $leave_space = 1;
-							while(<$stdout>){
-#								LOOP: {
-#									print(" digits"), redo LOOP if /\G\d+\b[,.;]?\s*/gc;
-#									print(" lowercase"), redo LOOP
-#									if /\G\p{Ll}+\b[,.;]?\s*/gc;
-#									print(" UPPERCASE"), redo LOOP
-#									if /\G\p{Lu}+\b[,.;]?\s*/gc;
-#									print(" Capitalized"), redo LOOP
-#									if /\G\p{Lu}\p{Ll}+\b[,.;]?\s*/gc;
-#									print(" MiXeD"), redo LOOP if /\G\pL+\b[,.;]?\s*/gc;
-#									print(" alphanumeric"), redo LOOP
-#									if /\G[\p{Alpha}\pN]+\b[,.;]?\s*/gc;
-#									print(" line-noise"), redo LOOP if /\G\W+/gc;
-#									print ". That's all!\n";
-#								}
-								my $line = $_;
-								$self->msg(4, "[new line '" . substr($line, 0, -1) . "']");
-								my $output = '';
-								my $line_was_cont = $cont_line; # line was being continued
-								#next if $prev_line =~ /^\s*$/ and $line =~ /^\s*$/;
-								$prev_line = $line;
-								while(length($line) > 0){
-									$self->msg(4, "[present line '" . substr($line, 0, -1) . "']");
-									my $indent = '  ' x $indent_depth;
-									# brackets [x ...], x = int
-									if($bracket_open){
-										$self->msg(4, '[bracket is open]');
-										if($line =~ /\]/){
-											$bracket_open = 0;
-											--$indent_depth;
-										}
-										if($line =~ /^(\s*[{<][^{<>}]*)/){
-											$self->msg(4, '[got < or {]'); # }
-											$line = substr($line, length($1));
-											$output .= $indent.$1;
-											$cont_line = 1;
-											$opening_paren_prev_line = 0;
-										}elsif($line =~ /^([^{<>}]*[>}])/){
-											$line = substr($line, length($1));
-											$output .= "$1\n";
-											$cont_line = 0;
-											$opening_paren_prev_line = 0;
-										}else{ # no [<>{}]
-											$output .= $line;
-											$line = '';
-											$cont_line = 0;
-											$opening_paren_prev_line = 0;
-										}
-										$line =~ s/^\s+//;
-									}elsif($line =~ /^((?:[^\[]|\[[0-9]+\])*+) (\[[0-9]+\s*+) [{<]/x
-											# } for vim
-											and length($line) > 78){
-										$self->msg(4, '[got bracket]');
-										$line = substr($line, length($2) + length($1));
-										my $pre_bracket = $1;
-										my $bracket = $2;
-										$bracket =~ s/^\s*+(.*\S)\s*$/$1/;
-										$output .= $indent.$pre_bracket."\n";
-										$output .= $indent.$bracket."\n";
-										++$indent_depth;
-										$cont_line = 0;
-										$bracket_open = 1;
-										$opening_paren_prev_line = 0;
-									}
-									# latex warning
-									elsif($line =~ /^(LaTeX Warning: .*|pdfTeX warning: pdflatex .*)$/){
-										$self->msg(4, '[got latex warning]');
-										$output .= $indent.$1;
-										$line = '';
-										$cont_line = 1;
-										$opening_paren_prev_line = 0;
-									}
-									# ... ( ... )
-									elsif($line =~ /^([^()]*+ \( [^()]*+ \))/x){
-										$self->msg(4, '[got ()]');
-										$output .= $indent if !$cont_line;
-										$output .= "$1\n";
-										$line = substr($line, length($1));
-										$cont_line = 0;
-										$leave_space = 0;
-										$opening_paren_prev_line = 0;
-									}
-									# < ...
-									elsif($line =~ /^(\s*+)(<\/[a-zA-Z0-9.~+\/-]++)/x){
-										$self->msg(4, '[got <]');
-										$output .= $indent if !$cont_line;
-										$output .= "$2";
-										$line = substr($line, length($1) + length($2));
-										$cont_line = 1;
-										$opening_chevron_prev_line = 1;
-										$leave_space = 0;
-										$opening_paren_prev_line = 0;
-									}
-									# ... >
-									elsif($opening_chevron_prev_line){
-										$self->msg(4, '[expecting >]');
-										if($line =~ /^([a-zA-Z0-9.~+\/-]*+>)/x){ # { for vim
-											$self->msg(4, '[got }]');
-											$output .= $indent if !$cont_line;
-											$output .= "$1\n";
-											$line = substr($line, length($1));
-											$leave_space = 0;
-											$opening_paren_prev_line = 0;
-											$opening_chevron_prev_line = 0;
-											$cont_line = 0;
-										}elsif($line !~ /^\s*$/){
-											$opening_chevron_prev_line = 0;
-											$cont_line = 0;
-										}else{
-											$line = '';
-										}
-									}
-									# { ...
-									elsif($line =~ /^(\s*+)(\{\/[a-zA-Z0-9.~+\/-]++)/x){
-										$self->msg(4, '[got {]'); # } for vim
-										$output .= $indent if !$cont_line;
-										$output .= "$2";
-										$line = substr($line, length($1) + length($2));
-										$cont_line = 1;
-										$opening_brace_prev_line = 1;
-										$leave_space = 0;
-										$opening_paren_prev_line = 0;
-									}
-									# ... }
-									elsif($opening_brace_prev_line){ # { for vim
-										$self->msg(4, '[expecting }]');
-										if($line =~ /^([a-zA-Z0-9.~+\/-]*+\})/x){ # { for vim
-											$self->msg(4, '[got }]');
-											$output .= $indent if !$cont_line;
-											$output .= "$1\n";
-											$line = substr($line, length($1));
-											$leave_space = 0;
-											$opening_paren_prev_line = 0;
-											$opening_brace_prev_line = 0;
-											$cont_line = 0;
-										}elsif($line !~ /^\s*$/){
-											$opening_brace_prev_line = 0;
-											$cont_line = 0;
-										}else{
-											$line = '';
-										}
-									}
-									# ( ...
-									elsif($line =~ /^\s*+\( ( [^()]*+ )/x){
-										$output .= $indent if !$cont_line;
-										my $filename = $1;
-										$self->msg(4, "[got (, length = " . length($filename) . "]");
-										$line = substr($line, length($filename) + 1);
-										++$indent_depth;
-										if(length($filename) == 79 and $filename =~ /^\S+$/){
-											chomp $filename;
-											$output .= "($filename";
-											$cont_line = 1;
-											$opening_paren_prev_line = 1;
-										}else{
-											$output .= "($filename\n";
-											$output =~ s/\n\n\z/\n/;
-											$cont_line = 0;
-											$opening_paren_prev_line = 0;
-										}
-										$leave_space = 0;
-									}
-									# ... )
-									elsif($indent_depth > 0 and $line =~ /^([^()]*+) \)/x){
-										$self->msg(4, '[got )]');
-										my $prefix = $1; 
-										$line = substr($line, length($1) + 1);
-										$line =~ s/^ +//;
-										$line = '' if $line =~ /^\s+$/;
-										if($prefix =~ /^\s*$/){
-											$output .= "\n" if $cont_line and !$opening_paren_prev_line;
-										}else{
-											$output .= $indent if !$cont_line;
-											$output .= $prefix;
-											$output .= "\n" if !$opening_paren_prev_line;
-										}
-										--$indent_depth;
-										$indent = '  ' x $indent_depth;
-										$output .= $indent if !$opening_paren_prev_line;
-										$output .= ")\n";
-										$cont_line = 0;
-										$opening_paren_prev_line = 0;
-									}
-									# { ... }
-									#elsif($line =~ /^( [^()]*+ \( [^()]*+ \) [^()]*+ )/x){
-									#	$self->msg(4, '[got ()]');
-									#	$output .= $indent if !$cont_line;
-									#	$output .= $1;
-									#	$line = substr($line, length($1));
-									#	$cont_line = length($line) > 0 ? 1 : 0;
-									#	$opening_paren_prev_line = 0;
-									#}
-									else{
-										if($line !~ /^\s*$/ or $leave_space){
-											$output .= $indent if !$cont_line;
-											$output .= $line;
-											$line = '';
-											$cont_line = 0;
-											$opening_paren_prev_line = 0;
-										}else{
-											$line = '';
-										}
-									}
-								}
-								$leave_space = 1;
-								chomp $output;
-								$output =~ s/\Q$self->{'tmp_ltx'}/$self->{'latexfile'}/g;
-								my $parsed = "$type: ";
-								print $parsed if $line_was_cont == 0;
-								if($output =~ /\b(?i:error|warning)\b|(?:Overfull |Underfull )/){
-									$color = $self->{'color-def'}{'std_suspicious'};
-								}
-								$self->msg_colored(1, '' . (join "\n$parsed", split /\n/, $output), $color);
-								if($cont_line == 0){
-									undef $color;
-									print "\n";
-								}
-							}
+							$self->format_std_out_pdflatex($stdout, $type);
 						}else{
 							# bibtex, biber or other cmds
 							while(<$stdout>){
@@ -689,6 +465,240 @@ sub syntaxCheck{
 			$self->msg(4, 'last value: ' . $self->{'exit_value'});
 			last if $? != 0;
 		} # end for @$cmd_entries
+	}
+
+	sub format_std_out_pdflatex{
+		my $self   = shift;
+		my $stdout = shift;
+		my $type   = shift;
+		my $indent_depth = 0;
+		my $cont_line = 0; # line is going to be continued
+		# the last paranthesis of the previous line was a '('
+		my $opening_paren_prev_line = 0; 
+		my $opening_brace_prev_line = 0; 
+		my $opening_chevron_prev_line = 0; 
+		my $prev_line = "\n"; 
+		my $bracket_open = 0; 
+		my $color;
+		my $leave_space = 1;
+		while(<$stdout>){
+#			LOOP: {
+#				print(" digits"), redo LOOP if /\G\d+\b[,.;]?\s*/gc;
+#				print(" lowercase"), redo LOOP
+#				if /\G\p{Ll}+\b[,.;]?\s*/gc;
+#				print(" UPPERCASE"), redo LOOP
+#				if /\G\p{Lu}+\b[,.;]?\s*/gc;
+#				print(" Capitalized"), redo LOOP
+#				if /\G\p{Lu}\p{Ll}+\b[,.;]?\s*/gc;
+#				print(" MiXeD"), redo LOOP if /\G\pL+\b[,.;]?\s*/gc;
+#				print(" alphanumeric"), redo LOOP
+#				if /\G[\p{Alpha}\pN]+\b[,.;]?\s*/gc;
+#				print(" line-noise"), redo LOOP if /\G\W+/gc;
+#				print ". That's all!\n";
+#			}
+			my $line = $_;
+			$self->msg(4, "[new line '" . substr($line, 0, -1) . "']");
+			my $output = '';
+			my $line_was_cont = $cont_line; # line was being continued
+			#next if $prev_line =~ /^\s*$/ and $line =~ /^\s*$/;
+			$prev_line = $line;
+			while(length($line) > 0){
+				$self->msg(4, "[present line '" . substr($line, 0, -1) . "']");
+				my $indent = '  ' x $indent_depth;
+				# brackets [x ...], x = int
+				if($bracket_open){
+					$self->msg(4, '[bracket is open]');
+					if($line =~ /\]/){
+						$bracket_open = 0;
+						--$indent_depth;
+					}
+					if($line =~ /^(\s*[{<][^{<>}]*)/){
+						$self->msg(4, '[got < or {]'); # }
+						$line = substr($line, length($1));
+						$output .= $indent.$1;
+						$cont_line = 1;
+						$opening_paren_prev_line = 0;
+					}elsif($line =~ /^([^{<>}]*[>}])/){
+						$line = substr($line, length($1));
+						$output .= "$1\n";
+						$cont_line = 0;
+						$opening_paren_prev_line = 0;
+					}else{ # no [<>{}]
+						$output .= $line;
+						$line = '';
+						$cont_line = 0;
+						$opening_paren_prev_line = 0;
+					}
+					$line =~ s/^\s+//;
+				}elsif($line =~ /^((?:[^\[]|\[[0-9]+\])*+) (\[[0-9]+\s*+) [{<]/x
+						# } for vim
+						and length($line) > 78){
+					$self->msg(4, '[got bracket]');
+					$line = substr($line, length($2) + length($1));
+					my $pre_bracket = $1;
+					my $bracket = $2;
+					$bracket =~ s/^\s*+(.*\S)\s*$/$1/;
+					$output .= $indent.$pre_bracket."\n";
+					$output .= $indent.$bracket."\n";
+					++$indent_depth;
+					$cont_line = 0;
+					$bracket_open = 1;
+					$opening_paren_prev_line = 0;
+				}
+				# latex warning
+				elsif($line =~ /^(LaTeX Warning: .*|pdfTeX warning: pdflatex .*)$/){
+					$self->msg(4, '[got latex warning]');
+					$output .= $indent.$1;
+					$line = '';
+					$cont_line = 1;
+					$opening_paren_prev_line = 0;
+				}
+				# ... ( ... )
+				elsif($line =~ /^([^()]*+ \( [^()]*+ \))/x){
+					$self->msg(4, '[got ()]');
+					$output .= $indent if !$cont_line;
+					$output .= "$1\n";
+					$line = substr($line, length($1));
+					$cont_line = 0;
+					$leave_space = 0;
+					$opening_paren_prev_line = 0;
+				}
+				# < ...
+				elsif($line =~ /^(\s*+)(<\/[a-zA-Z0-9.~+\/-]++)/x){
+					$self->msg(4, '[got <]');
+					$output .= $indent if !$cont_line;
+					$output .= "$2";
+					$line = substr($line, length($1) + length($2));
+					$cont_line = 1;
+					$opening_chevron_prev_line = 1;
+					$leave_space = 0;
+					$opening_paren_prev_line = 0;
+				}
+				# ... >
+				elsif($opening_chevron_prev_line){
+					$self->msg(4, '[expecting >]');
+					if($line =~ /^([a-zA-Z0-9.~+\/-]*+>)/x){ # { for vim
+						$self->msg(4, '[got }]');
+						$output .= $indent if !$cont_line;
+						$output .= "$1\n";
+						$line = substr($line, length($1));
+						$leave_space = 0;
+						$opening_paren_prev_line = 0;
+						$opening_chevron_prev_line = 0;
+						$cont_line = 0;
+					}elsif($line !~ /^\s*$/){
+						$opening_chevron_prev_line = 0;
+						$cont_line = 0;
+					}else{
+						$line = '';
+					}
+				}
+				# { ...
+				elsif($line =~ /^(\s*+)(\{\/[a-zA-Z0-9.~+\/-]++)/x){
+					$self->msg(4, '[got {]'); # } for vim
+					$output .= $indent if !$cont_line;
+					$output .= "$2";
+					$line = substr($line, length($1) + length($2));
+					$cont_line = 1;
+					$opening_brace_prev_line = 1;
+					$leave_space = 0;
+					$opening_paren_prev_line = 0;
+				}
+				# ... }
+				elsif($opening_brace_prev_line){ # { for vim
+					$self->msg(4, '[expecting }]');
+					if($line =~ /^([a-zA-Z0-9.~+\/-]*+\})/x){ # { for vim
+						$self->msg(4, '[got }]');
+						$output .= $indent if !$cont_line;
+						$output .= "$1\n";
+						$line = substr($line, length($1));
+						$leave_space = 0;
+						$opening_paren_prev_line = 0;
+						$opening_brace_prev_line = 0;
+						$cont_line = 0;
+					}elsif($line !~ /^\s*$/){
+						$opening_brace_prev_line = 0;
+						$cont_line = 0;
+					}else{
+						$line = '';
+					}
+				}
+				# ( ...
+				elsif($line =~ /^\s*+\( ( [^()]*+ )/x){
+					$output .= $indent if !$cont_line;
+					my $filename = $1;
+					$self->msg(4, "[got (, length = " . length($filename) . "]");
+					$line = substr($line, length($filename) + 1);
+					++$indent_depth;
+					if(length($filename) == 79 and $filename =~ /^\S+$/){
+						chomp $filename;
+						$output .= "($filename";
+						$cont_line = 1;
+						$opening_paren_prev_line = 1;
+					}else{
+						$output .= "($filename\n";
+						$output =~ s/\n\n\z/\n/;
+						$cont_line = 0;
+						$opening_paren_prev_line = 0;
+					}
+					$leave_space = 0;
+				}
+				# ... )
+				elsif($indent_depth > 0 and $line =~ /^([^()]*+) \)/x){
+					$self->msg(4, '[got )]');
+					my $prefix = $1; 
+					$line = substr($line, length($1) + 1);
+					$line =~ s/^ +//;
+					$line = '' if $line =~ /^\s+$/;
+					if($prefix =~ /^\s*$/){
+						$output .= "\n" if $cont_line and !$opening_paren_prev_line;
+					}else{
+						$output .= $indent if !$cont_line;
+						$output .= $prefix;
+						$output .= "\n" if !$opening_paren_prev_line;
+					}
+					--$indent_depth;
+					$indent = '  ' x $indent_depth;
+					$output .= $indent if !$opening_paren_prev_line;
+					$output .= ")\n";
+					$cont_line = 0;
+					$opening_paren_prev_line = 0;
+				}
+				# { ... }
+				#elsif($line =~ /^( [^()]*+ \( [^()]*+ \) [^()]*+ )/x){
+				#	$self->msg(4, '[got ()]');
+				#	$output .= $indent if !$cont_line;
+				#	$output .= $1;
+				#	$line = substr($line, length($1));
+				#	$cont_line = length($line) > 0 ? 1 : 0;
+				#	$opening_paren_prev_line = 0;
+				#}
+				else{
+					if($line !~ /^\s*$/ or $leave_space){
+						$output .= $indent if !$cont_line;
+						$output .= $line;
+						$line = '';
+						$cont_line = 0;
+						$opening_paren_prev_line = 0;
+					}else{
+						$line = '';
+					}
+				}
+			}
+			$leave_space = 1;
+			chomp $output;
+			$output =~ s/\Q$self->{'tmp_ltx'}/$self->{'latexfile'}/g;
+			my $parsed = "$type: ";
+			print $parsed if $line_was_cont == 0;
+			if($output =~ /\b(?i:error|warning)\b|(?:Overfull |Underfull )/){
+				$color = $self->{'color-def'}{'std_suspicious'};
+			}
+			$self->msg_colored(1, '' . (join "\n$parsed", split /\n/, $output), $color);
+			if($cont_line == 0){
+				undef $color;
+				print "\n";
+			}
+		}
 	}
 
 	# search path for a given number of executable files. break on first found file.
