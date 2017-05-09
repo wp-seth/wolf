@@ -1237,6 +1237,11 @@ sub syntaxCheck{
 			/xmgp){
 				my $package = $1;
 				next if ${^MATCH} =~ /Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
+				next if ${^MATCH} =~ /
+					^Package:\ssilence\s.*\sfiltering\sof\swarnings\sand\serror\sm|
+					\\sl\@(?:BankOf)?Warning|
+					LaTeX\sInfo:\sRedefining\s\\GenericWarning
+				/x;
 				my $w = ${^MATCH};
 				$w =~ s/\n\n(?:Package .*|[\s()]*$)//s;
 				# maybe warnings continues on next line(s)
@@ -1273,6 +1278,7 @@ sub syntaxCheck{
 				# check for false positives
 				next if $err =~ /Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
 				next if $err =~ /file:line:error style messages enabled/;
+				next if $err =~ /^Package: silence .* filtering of warnings and error m/;
 				# collect unfindable files
 				if($err =~ /^(.*\sError:\sFile\s`)([^']+)'\snot\sfound\b/s){
 					my $fnf_pre = $1;
