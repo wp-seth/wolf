@@ -869,7 +869,10 @@ sub syntaxCheck{
 			my $last_change_time = $self->newest_change($other_files);
 			for my $bib(@$orig_btx){
 				if(-f $bib){ # if bibtex files exist and have been changed
-					$compile_mode{'bib'} = 1 if compare($bib, $self->filename2temp($bib));
+					if(compare($bib, $self->filename2temp($bib))){
+						$compile_mode{'bib'} = 1;
+						$self->msg(2, "bib file '$bib' has changed");
+					}
 				}else{
 					$self->msg(0, "file '$bib' not found", 'error');
 					sleep 1;
@@ -877,6 +880,7 @@ sub syntaxCheck{
 			}
 			# in some cases the aux file should be deleted
 			if($compile_mode{'del_aux'}){ 
+				$self->msg(2, "delete aux file, need to re-compile");
 				unlink "$self->{'tmp_ltx'}.aux";
 				delete $compile_mode{'del_aux'};
 				$compile_mode{'latex'} = 1;
@@ -884,10 +888,13 @@ sub syntaxCheck{
 				# check whether original source files have been changed
 				$compile_mode{'latex'} = $self->changed_orig_files(
 					$last_change_time_bak, $last_change_time);
+				if($compile_mode{'latex'}){
+					$self->msg(2, "latex files changed; need to re-compile");
+				}
 				# check whether missing files are there now
 				for my $fnf(@{$self->{'files-not-found'}}){
 					if(-e $fnf){
-						$self->msg(1, "found missing file '$fnf'");
+						$self->msg(1, "found missing file '$fnf'; need to re-compile");
 						$compile_mode{'latex'} = 1;
 						# fnf-array will be reset and rebuilt in parse_tex_log
 						last;
@@ -912,17 +919,25 @@ sub syntaxCheck{
 					if($self->{'biber'} == 1){
 						$mincrossrefs =~ s/min\K-(?=crossrefs)//; # param name differs in biber
 						$self->format_std_out([
-							{'type' => 'biber', 'cmd' => "biber$mincrossrefs $self->{'tmp_ltx'}",}, 
+							{'type' => 'biber', 
+								'cmd' => "biber$mincrossrefs $self->{'tmp_ltx'}",
+							}, 
 						]);
 					}else{
 						$self->format_std_out([
-							{'type' => 'bibtex', 'cmd' => "bibtex$mincrossrefs $self->{'tmp_ltx'}",}, 
+							{'type' => 'bibtex', 
+								'cmd' => "bibtex$mincrossrefs $self->{'tmp_ltx'}",
+							}, 
 						]);
 					}
 					# check, whether bbl file has changed or bibtex-call is forced
-					$compile_mode{'latex'} = $compile_mode{'bib'} ? 1 : $self->changed_bbl();
-					# create initial $self->{'old_bbl'}
-					$self->changed_bbl() unless defined $self->{'old_bbl'};
+					if($compile_mode{'bib'}){
+						$compile_mode{'latex'} = 1;
+						# create initial $self->{'old_bbl'}
+						$self->changed_bbl() unless defined $self->{'old_bbl'};
+					}else{
+						$compile_mode{'latex'} = $self->changed_bbl();
+					}
 					$self->msg(3, "compile mode: " . Dumper(\%compile_mode));
 				}else{
 					if($compile_mode{'bib'}){
@@ -1088,10 +1103,17 @@ sub syntaxCheck{
 		my $self  = shift;
 		my $files = shift;
 		my $max_date = 0;
+		my $newest_file;
 		for my $file(@$files){
 			next unless -e $file;
 			my $mod_ts = (stat $file)[9];
-			$max_date = $mod_ts if $mod_ts > $max_date;
+			if($mod_ts > $max_date){
+				$max_date = $mod_ts;
+				$newest_file = $file;
+			}
+		}
+		if(defined $newest_file){
+			$self->msg(3, "newest file: '$newest_file', timestamp = $max_date");
 		}
 		return $max_date;
 	}
@@ -1248,6 +1270,7 @@ sub syntaxCheck{
 				)/mgxp){
 				my $err = ${^MATCH};
 				$err =~ s/[\n\r]+$//;
+				# check for false positives
 				next if $err =~ /Package: infwarerr .* Providing info\/warning\/(?:error )?messages? \(HO\)/;
 				next if $err =~ /file:line:error style messages enabled/;
 				# collect unfindable files
