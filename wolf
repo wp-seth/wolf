@@ -119,7 +119,7 @@ sub syntaxCheck{
 		'gui'             => 1,                # use some text editor and pdf viewer
 		'format-output'   => 1,                # format std output
 		'min-crossrefs'   => undef,            # bibtex --min-crossrefs
-		'pdfviewers'      => 'kpdf|evince|okular|acroread', # pdf viewers
+		'pdfviewers'      => 'evince|kpdf|okular|acroread', # pdf viewers
 		'verbose'         => 1,                # trace; grade of verbosity
 		'version'         => 0,                # diplay version and exit
 	);
@@ -1457,10 +1457,10 @@ will be set automatically to 900, unless you did not set it manually.
 =item B<--pdfviewer>=I<string>, B<--pdf-viewer>=I<string>
 
 pdf viewer that shall be used. default: I<string> = choose automatically from one 
-of "kpdf|evince|okular|acroread" whatever is found first.
+of "evince|kpdf|okular|acroread" whatever is found first.
 
 you may choose I<string> as 'okular' to force trying okular only. or you may choose
-I<string> as 'evince|kpdf' to try evince at first and kpdf if evince can't be 
+I<string> as 'kpdf|evince' to try kpdf at first and evince only if kpdf can't be 
 loaded.
 
 if I<string> is 'none', then no pdf viewer will be loaded.
