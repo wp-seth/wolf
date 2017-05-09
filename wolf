@@ -119,6 +119,7 @@ sub syntaxCheck{
 		'gui'             => 1,                # use some text editor and pdf viewer
 		'format-output'   => 1,                # format std output
 		'min-crossrefs'   => undef,            # bibtex --min-crossrefs
+		'pdflatex-output' => 1,                # show pdflatex-output
 		'pdfviewers'      => 'evince|kpdf|okular|acroread', # pdf viewers
 		'verbose'         => 1,                # trace; grade of verbosity
 		'version'         => 0,                # diplay version and exit
@@ -130,6 +131,7 @@ sub syntaxCheck{
 		"format-output!",
 		"gui!",
 		"min-crossrefs=i",
+		"pdflatex-output!",
 		"pdfviewers|pdf-viewers=s",# => sub {
 		#	$params{'pdfviewers'} = $_[1].'|'.$params{'pdfviewers'};
 		#},
@@ -200,6 +202,7 @@ sub syntaxCheck{
 			'old_bbl'         => undef, # see sub changed_bbl
 			'orig_ltx'        => undef, # orig latex file (with .tex extension), set later
 			'exit_value'      => 0,
+			'pdflatex-output' => $params->{'pdflatex-output'},
 			'pdfviewer'       => undef,
 			'tmp_ltx'         => 'temp_latex_file' . time() . 
 				sprintf('%d', 1_000_000 * rand()),
@@ -447,7 +450,9 @@ sub syntaxCheck{
 						}
 					}else{
 						if($type eq 'pdflatex'){
-							$self->format_std_out_pdflatex($stdout, $type);
+							if($self->{'pdflatex-output'}){
+								$self->format_std_out_pdflatex($stdout, $type);
+							}
 						}else{
 							# bibtex, biber or other cmds
 							while(<$stdout>){
@@ -1334,6 +1339,7 @@ my $wolf = Wolf->new({
 	'no_cont'         => $params->{'exit'},
 	'format-output'   => $params->{'format-output'},
 	'latexfile'       => $params->{'latexfile'},
+	'pdflatex-output' => $params->{'pdflatex-output'},
 	'pdfviewers'      => [split /\|/, $params->{'pdfviewers'}],
 	'verbosity'       => $params->{'verbose'},
 });
@@ -1453,6 +1459,13 @@ http://tug.ctan.org/biblio/bibtex/contrib/IEEEtran/IEEEtran_bst_HOWTO.pdf.
 
 wolf tries to detect the bibliography style. if it detects 'IEEEtran', then I<int> 
 will be set automatically to 900, unless you did not set it manually.
+
+=item B<--pdflatex-output>, B<--no-pdflatex-output>, B<--nopdflatex-output>
+
+if B<--no-pdflatex-output> is set, pdflatex's output will not be displayed, except 
+for summary of errors/warnings
+
+default = B<--pdflatex-output>
 
 =item B<--pdfviewer>=I<string>, B<--pdf-viewer>=I<string>
 
