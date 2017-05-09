@@ -866,6 +866,7 @@ sub syntaxCheck{
 		$self->msg(3, 'now start looping, i.e. initial compilation and afterwards ' .
 			'waiting for file changes');
 		while(1){
+			my $force_error_log = 0;
 			my $last_change_time = $self->newest_change($other_files);
 			for my $bib(@$orig_btx){
 				if(-f $bib){ # if bibtex files exist and have been changed
@@ -937,6 +938,11 @@ sub syntaxCheck{
 						$self->changed_bbl() unless defined $self->{'old_bbl'};
 					}else{
 						$compile_mode{'latex'} = $self->changed_bbl();
+						# if latex does not have to be called again, still the error log should be 
+						# printed
+						unless($compile_mode{'latex'}){
+							$force_error_log = 1;
+						}
 					}
 					$self->msg(3, "compile mode: " . Dumper(\%compile_mode));
 				}else{
@@ -975,6 +981,12 @@ sub syntaxCheck{
 			}else{ # else do nothing
 				$compiling_counter = 0;
 				last if $self->{'no_cont'};
+				if($force_error_log){
+					my $dummy = [];
+					my $extract_errors = $self->extract_usedfiles(
+						$self->{'orig_ltx'}, $dummy, 'flsfile');
+					$self->parse_tex_log($extract_errors);
+				}
 				$self->msg(5, 'now sleep 1 and goto loop begin');
 				sleep 1;
 				next;
