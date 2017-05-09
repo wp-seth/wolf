@@ -386,7 +386,7 @@ sub syntaxCheck{
 			$path =~ s/^PWD (.*)\n?/$1\//;
 			@$usedfiles = uniq(
 				grep {
-					/^INPUT (?!$file_prefix)(.*)/ and 
+					/^INPUT (?!\.\/$file_prefix)(?!$file_prefix)(.*)/ and 
 					$_ = substr($1, 0, 1) eq '/' ? $1 : $path . $1;
 				} @$usedfiles
 			);
