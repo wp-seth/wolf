@@ -113,15 +113,15 @@ $main::VERSION = '1.28.0'; # 20170509
 
 sub syntaxCheck{
 	my %params = ( # default cli params
-		'editors'       => 'gvim|kile|kate',              # text editor
-		'exit'          => 0,                             # exit after compilation
-		'colors'        => 1,                             # use colors
-		'gui'           => 1,                             # use some text editor and pdf viewer
-		'format-output' => 1,                             # format std output
-		'min-crossrefs' => undef,                         # bibtex --min-crossrefs
-		'pdfviewers'    => 'kpdf|evince|okular|acroread', # pdf viewers
-		'verbose'       => 1,                             # trace; grade of verbosity
-		'version'       => 0,                             # diplay version and exit
+		'editors'         => 'gvim|kile|kate', # text editor
+		'exit'            => 0,                # exit after compilation
+		'colors'          => 1,                # use colors
+		'gui'             => 1,                # use some text editor and pdf viewer
+		'format-output'   => 1,                # format std output
+		'min-crossrefs'   => undef,            # bibtex --min-crossrefs
+		'pdfviewers'      => 'kpdf|evince|okular|acroread', # pdf viewers
+		'verbose'         => 1,                # trace; grade of verbosity
+		'version'         => 0,                # diplay version and exit
 	);
 	GetOptions(\%params,
 		"colors!",
@@ -148,7 +148,7 @@ sub syntaxCheck{
 	my @additional_params = (1,1); # number of additional params (min, max);
 	if(@ARGV<$additional_params[0] 
 			or ($additional_params[1] != -1 and @ARGV>$additional_params[1])){
-		if($additional_params[0]==$additional_params[1]){
+		if($additional_params[0] == $additional_params[1]){
 			print "number of arguments must be exactly $additional_params[0], but is " . 
 				(0+@ARGV) . ".\n";
 		}else{
@@ -380,11 +380,11 @@ sub syntaxCheck{
 			my $file_prefix = $self->{'tmp_ltx'};
 			@$usedfiles = slurp($file_prefix . '.fls');
 			my $path = shift @$usedfiles;
-			$path =~s/^PWD (.*)\n?/$1\//;
+			$path =~ s/^PWD (.*)\n?/$1\//;
 			@$usedfiles = uniq(
 				grep {
 					/^INPUT (?!$file_prefix)(.*)/ and 
-					$_ = substr($1, 0, 1) eq '/' ? $1 : $path.$1;
+					$_ = substr($1, 0, 1) eq '/' ? $1 : $path . $1;
 				} @$usedfiles
 			);
 		# method till 2013-08-16: faulty because not all files were matched
@@ -836,7 +836,7 @@ sub syntaxCheck{
 		push @_unlink_files, $self->{'tmp_ltx'} . $_ for ('.tex', '.log', '.pdf', 
 			'.aux', '.bcf', '.bbl', '.blg', '-blx.bib', '.brf', '.fls', '.idx', '.ilg',
 			'.ind', '.loa', '.lof', '.lot', '.nav', '.nlo', '.out', '.run.xml', '.snm', 
-			'.tdo', '.toc');
+			'.tdo', '.toc', '.xtr');
 		push @_unlink_files, $self->filename2temp($_) for @$orig_btx;
 		unless(defined $self->{'bibtex_params'}->{'min-crossrefs'}){
 			my $bib_styles = $self->extract_bibstyle();
@@ -981,7 +981,7 @@ sub syntaxCheck{
 				}
 				$self->copyfile($self->{'tmp_ltx'} . '.pdf', $pdf_file);
 			}
-			$self->msg(1, ''.localtime());
+			$self->msg(1, '' . localtime());
 		}# end of endless loop
 		return 1; # useless, I know
 	}
