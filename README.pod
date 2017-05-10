@@ -131,17 +131,17 @@ same as B<--verbose=0>.
 
 =item B<--very-verbose, -vv>
 
-same as B<--verbose=2>. you may use B<-vvv> for B<--verbose=3> a.s.o.
+same as B<--verbose=3>. you may use B<-vvv> for B<--verbose=4> a.s.o.
 
 =item B<--verbose, -v>
 
-same as B<--verbose=1>.
+same as B<--verbose=2>.
 
 =back
 
 =head1 LICENCE
 
-Copyright (c) 2016, seth
+Copyright (c) 2017, seth
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without

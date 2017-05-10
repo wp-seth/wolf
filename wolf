@@ -136,7 +136,7 @@ sub syntaxCheck{
 		#	$params{'pdfviewers'} = $_[1].'|'.$params{'pdfviewers'};
 		#},
 		"silent|quiet|q" => sub { $params{'verbose'} = 0;},
-		"very-verbose" => sub { $params{'verbose'} = 2;},
+		"very-verbose" => sub { $params{'verbose'} = 3;},
 		"verbose|v:+",
 		# auto_version will not auto make use of 'V'
 		"version|V" => sub { Getopt::Long::VersionMessage();},
@@ -236,24 +236,27 @@ sub syntaxCheck{
 	sub changed_bbl{
 		my $self         = shift;
 		my $changed      = 1;
-		# tmp bbl file is used for checking whether bibtex should be called
-		my $bbl = $self->{'tmp_ltx'} . '.bbl';
-		if(-e $bbl){
-			$self->{'new_bbl'} = slurp($bbl);
-			if(defined $self->{'old_bbl'}){
-				$changed = undef if $self->{'old_bbl'} eq $self->{'new_bbl'};
-				if(defined $changed){
-					$self->msg(1, 'bbl file has changed.')
+		# if biber is used, this indicator will not work
+		unless($self->{'biber'} == 1){
+			# tmp bbl file is used for checking whether bibtex should be called
+			my $bbl = $self->{'tmp_ltx'} . '.bbl';
+			if(-e $bbl){
+				$self->{'new_bbl'} = slurp($bbl);
+				if(defined $self->{'old_bbl'}){
+					$changed = undef if $self->{'old_bbl'} eq $self->{'new_bbl'};
+					if(defined $changed){
+						$self->msg(1, 'bbl file has changed.')
+					}else{
+						$self->msg(1, 'bbl file has not changed. probably no need to re-run ' . 
+							'latex compiler');
+					}
 				}else{
-					$self->msg(1, 'bbl file has not changed. probably no need to re-run ' . 
-						'latex compiler');
+					$self->msg(2, 'old bbl content not found, creating...');
 				}
+				$self->{'old_bbl'} = $self->{'new_bbl'};
 			}else{
-				$self->msg(2, 'old bbl content not found, creating...');
+				$self->msg(0, 'could not load bbl file', 'warning');
 			}
-			$self->{'old_bbl'} = $self->{'new_bbl'};
-		}else{
-			$self->msg(0, 'could not load bbl file', 'warning');
 		}
 		return $changed;
 	}
@@ -334,7 +337,8 @@ sub syntaxCheck{
 			push @$bibfiles, (split /\s*,\s*/, $1);
 		}
 		if($self->{'biber'} == 0 
-			&& $latexcontent =~ /\\usepackage(?:\[[^\]]*\])\{[^}]+\bbiblatex\b/s){
+			&& $latexcontent =~ /\\usepackage(?:\[([^\]]*)\])\{[^}]+\bbiblatex\b/s
+			&& $1 =~ /\bbackend\s*=\s*biber\b/){
 			$self->{'biber'} = 1;
 		}
 		if($self->{'biber'} > 0){
@@ -1147,14 +1151,16 @@ sub syntaxCheck{
 		if($log =~ /
 			LaTeX\sWarning:\s
 				Label\(s\)\smay\shave\schanged\.\sRerun\sto\sget\scross-references\sright\.|
-			Package\snatbib\sWarning:\sCitation\(s\)\smay\shave\schanged.\s*\n\s*
-			\(natbib\)\s*Rerun\sto\sget\scitations\scorrect\.|
+			Package\sbiblatex\sWarning:\sPlease\srerun\sLaTeX\.|
 			Package\slineno\sWarning:\sLinenumber\sreference\sfailed,\s*\n\s*
 			\(lineno\)\s*rerun\sto\sget\sit\sright\.|
+			Package\snatbib\sWarning:\sCitation\(s\)\smay\shave\schanged.\s*\n\s*
+			\(natbib\)\s*Rerun\sto\sget\scitations\scorrect\.|
 			pdfTeX\swarning\s\(dest\):\s # for vim syntax highlighting {
 				name\{[^}]+\}\shas\sbeen\sreferenced\sbut\sdoes\snot|
 			Package\srerunfilecheck\sWarning:\sFile\s/x
 		){
+			$self->msg(2, 'found demand on re-compiling');
 			$compile_mode{'latex'} = 1;
 		}
 		# cases, where bibtex should be used (again)
@@ -1162,6 +1168,7 @@ sub syntaxCheck{
 			Warning:\sCitation\s.*\son\spage\s\d+\sundefined\son\sinput\sline/x
 			# or $log =~ /Package natbib Warning: There were undefined citations/
 		){
+			$self->msg(2, 'citation undefined, so re-bibtexing');
 			$compile_mode{'bib'} = 1;
 		}
 		# cases, where aux-file should be deleted
@@ -1543,17 +1550,17 @@ same as B<--verbose=0>.
 
 =item B<--very-verbose, -vv>
 
-same as B<--verbose=2>. you may use B<-vvv> for B<--verbose=3> a.s.o.
+same as B<--verbose=3>. you may use B<-vvv> for B<--verbose=4> a.s.o.
 
 =item B<--verbose, -v>
 
-same as B<--verbose=1>.
+same as B<--verbose=2>.
 
 =back
 
 =head1 LICENCE
 
-Copyright (c) 2016, seth
+Copyright (c) 2017, seth
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
