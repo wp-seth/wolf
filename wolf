@@ -109,7 +109,7 @@ $SIG{'TERM'} = \&_cleanup;
 $SIG{'KILL'} = \&_cleanup;
 $SIG{'__DIE__'} = \&_clean;
 
-$main::VERSION = '1.28.0'; # 20170509
+$main::VERSION = '1.28.1'; # 20170705
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -1229,16 +1229,21 @@ sub syntaxCheck{
 			}
 			$self->print_tex_log_messages(
 				$msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'notice'});
-			# bibtex warnings
+			# bibtex and biber warnings
 			$msg = $msgs{'bib_warnings'};
 			if(defined $biblog){
+				# biber
+				while($biblog =~ / WARN - .*/mgp){
+					++$msg->{'occs'}->{${^MATCH}};
+				}
+				# bibtex
 				while($biblog =~ /^Warning--.*|I found no \\[a-z]+ command---while .*/mgp){
 					++$msg->{'occs'}->{${^MATCH}};
 				}
 			}
 			$self->print_tex_log_messages(
 				$msg->{'caption'}, $msg->{'occs'}, $self->{'color-def'}{'warn'});
-			# bibtex errors
+			# bibtex and biber errors
 			$msg = $msgs{'bib_errs'};
 			if(defined $biblog){
 				while($biblog =~ /^.*\berrors?\b.*(?:\n---.*(?:\n :.*)*)?/mgp){
