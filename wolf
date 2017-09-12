@@ -109,7 +109,7 @@ $SIG{'TERM'} = \&_cleanup;
 $SIG{'KILL'} = \&_cleanup;
 $SIG{'__DIE__'} = \&_clean;
 
-$main::VERSION = '1.28.1'; # 20170705
+$main::VERSION = '1.28.3'; # 20170911
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -369,9 +369,13 @@ sub syntaxCheck{
 		my $used_latex_files = [grep {m/\.tex\z/} @{$self->{'usedfiles'}}];
 		my $bibstyles = [];
 		for my $file(@$used_latex_files){
-			my $content = slurp($file); # for vim syntax highlighting: {
-			while($content =~ /\\bibliographystyle\s*\{([^}]++)\}/gs){
-				push @$bibstyles, (split /,\s*/, $1);
+			if(-e $file){
+				my $content = slurp($file); # for vim syntax highlighting: {
+				while($content =~ /\\bibliographystyle\s*\{([^}]++)\}/gs){
+					push @$bibstyles, (split /,\s*/, $1);
+				}
+			}else{
+				$self->msg(0, "could not find file '$file'", 'error');
 			}
 		}
 		return $bibstyles;
@@ -818,9 +822,25 @@ sub syntaxCheck{
 				$could_interprate_error = 1;
 				$interpretation = "maybe you should use '\\newline' instead of '\\\\'.";
 			}
+			if($error =~ /^$err_re (?:LaTeX Error: )?Float\(s\) lost\./){
+				$could_interprate_error = 1;
+				$interpretation = "1. The most likely reason is that you placed a float " . 
+					"or a \\marginpar command inside another float or marginpar, or inside " .
+					"a minipage environment, a \\parbox or \\footnote. Note that the error " .
+					"may be detected a long way from the problematic command(s), so the " . 
+					"techniques of tracking down elusive errors all need to be called into " .
+					"play. (source: http://www.tex.ac.uk/FAQ-fllost.html)\n" . 
+					"2. maybe you placed a \\todo inside a \\footnote?";
+			}
 			if($error =~ /^LaTeX Font Warning: Font shape .O[A-Z0-9]{2}\/cm(?:[a-z]+\/)+[a-z]+' in size <.*> not available/s){
 				$could_interprate_error = 1;
 				$interpretation = "try inserting '\\RequirePackage{fix-cm}' _before_ \\documentclass{...}, see <http://tex.stackexchange.com/questions/4824/what-do-these-font-shape-warnings-mean>";
+			}
+			if($error =~ /LaTeX Warning: Marginpar on page [0-9]+ moved\./s){
+				$could_interprate_error = 1;
+				$interpretation = "sometimes \\todo (from todonotes package) makes problems. " . 
+					"maybe you placed a \\todo and a \\label inside of a \\caption? " . 
+					"this warning can be avoided in many cases by using \\todo[inline] instead of pure \\todo.";
 			}
 			if($error =~ /Package amsmath Warning: Unable to redefine math accent \\vec/s){
 				$could_interprate_error = 1;
@@ -843,9 +863,9 @@ sub syntaxCheck{
 		my $other_files = [];                        # filenames of files, that are used
 		# the following files will be cleaned up (deleted) when wolf is stopped
 		push @_unlink_files, $self->{'tmp_ltx'} . $_ for ('.tex', '.log', '.pdf', 
-			'.aux', '.bcf', '.bbl', '.blg', '-blx.bib', '.brf', '.fls', '.idx', '.ilg',
-			'.ind', '.loa', '.lof', '.lot', '.nav', '.nlo', '.out', '.run.xml', '.snm', 
-			'.tdo', '.toc', '.xtr');
+			'.aux', '.bcf', '.bbl', '.blg', '-blx.bib', '.brf', '.fls', '.glsdefs', 
+			'.idx', '.ilg', '.ind', '.loa', '.lof', '.lot', '.nav', '.nlo', '.out', 
+			'.run.xml', '.snm', '.tdo', '.toc', '.xtr');
 		push @_unlink_files, $self->filename2temp($_) for @$orig_btx;
 		unless(defined $self->{'bibtex_params'}->{'min-crossrefs'}){
 			my $bib_styles = $self->extract_bibstyle();
