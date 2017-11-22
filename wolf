@@ -109,10 +109,11 @@ $SIG{'TERM'} = \&_cleanup;
 $SIG{'KILL'} = \&_cleanup;
 $SIG{'__DIE__'} = \&_clean;
 
-$main::VERSION = '1.28.3'; # 20170911
+$main::VERSION = '1.28.4'; # 20171122
 
 sub syntaxCheck{
 	my %params = ( # default cli params
+		'check-missing'   => 1,                # check for missing files
 		'editors'         => 'gvim|kile|kate', # text editor
 		'exit'            => 0,                # exit after compilation
 		'colors'          => 1,                # use colors
@@ -129,6 +130,7 @@ sub syntaxCheck{
 		"editors=s",# => sub { $params{'editors'} = $_[1].'|'.$params{'editors'};},
 		"exit",
 		"format-output!",
+		"check-missing!",
 		"gui!",
 		"min-crossrefs=i",
 		"pdflatex-output!",
@@ -1419,9 +1421,9 @@ my $wolf = Wolf->new({
 
 # check missing files
 my $extract_errors = $wolf->extract_usedfiles(undef, undef, 'texfile');
-if(@$extract_errors > 0 and $params->{'verbose'} > 0){
+if($params->{'check-missing'} && @$extract_errors > 0 && $params->{'verbose'} > 0){
 	my $tex_content = slurp $wolf->{'orig_ltx'};
-	unless($tex_content =~/\\graphicspath/){
+	unless($tex_content =~ /\\graphicspath/){
 		print "\n";
 		$wolf->msg(0, 
 			'following files could not be found by wolf (but they may be found by pdflatex though):', 
@@ -1466,6 +1468,7 @@ wolf latexfile [options]
       --no-format-output   don't format output of pdflatex and bibtex
       --pdfviewer=string   pdf viewer to use (default = choose automatically)
       --no-gui             short for --pdfviewer=none --editors=none
+      --no-check-missing   don't check for missing files at the begin
 
   -V, --version            display version and exit.
   -h, --help               display brief help
@@ -1490,6 +1493,10 @@ wolf latexfile [options]
 =head1 OPTIONS
 
 =over 8
+
+=item B<--no-check-missing>, B<--nocheck-missing>
+
+don't check for missing files at the beginning. this test is not very good, anyway.
 
 =item B<--colors>, B<--no-colors>, B<--nocolors>
 
