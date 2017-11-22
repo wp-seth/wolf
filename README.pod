@@ -22,6 +22,7 @@ wolf latexfile [options]
       --no-format-output   don't format output of pdflatex and bibtex
       --pdfviewer=string   pdf viewer to use (default = choose automatically)
       --no-gui             short for --pdfviewer=none --editors=none
+      --no-check-missing   don't check for missing files at the begin
 
   -V, --version            display version and exit.
   -h, --help               display brief help
@@ -46,6 +47,10 @@ wolf latexfile [options]
 =head1 OPTIONS
 
 =over 8
+
+=item B<--no-check-missing>, B<--nocheck-missing>
+
+don't check for missing files at the beginning. this test is not very good, anyway.
 
 =item B<--colors>, B<--no-colors>, B<--nocolors>
 
