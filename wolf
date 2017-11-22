@@ -555,8 +555,8 @@ sub syntaxCheck{
 					my $pre_bracket = $1;
 					my $bracket = $2;
 					$bracket =~ s/^\s*+(.*\S)\s*$/$1/;
-					$output .= $indent.$pre_bracket."\n";
-					$output .= $indent.$bracket."\n";
+					$output .= $indent . $pre_bracket . "\n";
+					$output .= $indent . $bracket . "\n";
 					++$indent_depth;
 					$cont_line = 0;
 					$bracket_open = 1;
@@ -574,7 +574,7 @@ sub syntaxCheck{
 				# general latex warning
 				elsif($line =~ /^(LaTeX Warning: .*|pdfTeX warning: pdflatex .*)$/){
 					$self->msg(4, '[got latex warning]');
-					$output .= $indent.$1;
+					$output .= $indent . $1;
 					$line = '';
 					$cont_line = 1;
 					$opening_paren_prev_line = 0;
