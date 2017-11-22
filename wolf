@@ -488,7 +488,8 @@ sub syntaxCheck{
 		my $type   = shift;
 		my $indent_depth = 0;
 		my $cont_line = 0; # line is going to be continued
-		# the last paranthesis of the previous line was a '('
+		my $cont_state; # e.g. a class or a package mentioned in a warning
+		# the last parenthesis of the previous line was a '('
 		my $opening_paren_prev_line = 0; 
 		my $opening_brace_prev_line = 0; 
 		my $opening_chevron_prev_line = 0; 
@@ -517,6 +518,7 @@ sub syntaxCheck{
 			my $line_was_cont = $cont_line; # line was being continued
 			#next if $prev_line =~ /^\s*$/ and $line =~ /^\s*$/;
 			$prev_line = $line;
+			my $cont_state_tmp; # cont_state just for this line
 			while(length($line) > 0){
 				$self->msg(4, "[present line '" . substr($line, 0, -1) . "']");
 				my $indent = '  ' x $indent_depth;
@@ -560,7 +562,16 @@ sub syntaxCheck{
 					$bracket_open = 1;
 					$opening_paren_prev_line = 0;
 				}
-				# latex warning
+				# latex warning with explicit class/package name
+				elsif($line =~ /^(?<line>(?:Class|Package)\s(?<packageclass>[a-zA-Z0-9_-]+)\s[wW]arning.*)$/){
+					$cont_state_tmp = $+{'packageclass'};
+					$self->msg(4, "[got latex warning of package '$cont_state_tmp']");
+					$output .= $indent . $+{'line'};
+					$line = '';
+					$cont_line = 0;
+					$opening_paren_prev_line = 0;
+				}
+				# general latex warning
 				elsif($line =~ /^(LaTeX Warning: .*|pdfTeX warning: pdflatex .*)$/){
 					$self->msg(4, '[got latex warning]');
 					$output .= $indent.$1;
@@ -569,14 +580,24 @@ sub syntaxCheck{
 					$opening_paren_prev_line = 0;
 				}
 				# ... ( ... )
-				elsif($line =~ /^([^()]*+ \( [^()]*+ \))/x){
-					$self->msg(4, '[got ()]');
-					$output .= $indent if !$cont_line;
-					$output .= "$1\n";
-					$line = substr($line, length($1));
-					$cont_line = 0;
-					$leave_space = 0;
-					$opening_paren_prev_line = 0;
+				elsif($line =~ /^(?<line>[^()]*+ \( (?<packageclass>[^()]*+) \))/x){
+					if(defined $cont_state && $cont_state eq $+{'packageclass'}){
+						$cont_state_tmp = $cont_state;
+						$self->msg(4, "[got ($cont_state)]");
+						$output .= $indent . $line;
+						$line = '';
+						$cont_line = 0;
+						$opening_paren_prev_line = 0;
+					}else{
+						#undef $cont_state;
+						$self->msg(4, '[got ()]');
+						$output .= $indent if !$cont_line;
+						$output .= $+{'line'} . "\n";
+						$line = substr($line, length($+{'line'}));
+						$cont_line = 0;
+						$leave_space = 0;
+						$opening_paren_prev_line = 0;
+					}
 				}
 				# < ...
 				elsif($line =~ /^(\s*+)(<\/[a-zA-Z0-9.~+\/-]++)/x){
@@ -700,12 +721,15 @@ sub syntaxCheck{
 					}
 				}
 			}
+			$cont_state = $cont_state_tmp; # maybe set undef here
 			$leave_space = 1;
 			chomp $output;
 			$output =~ s/\Q$self->{'tmp_ltx'}/$self->{'latexfile'}/g;
 			my $parsed = "$type: ";
 			print $parsed if $line_was_cont == 0;
-			if($output =~ /\b(?i:error|warning)\b|(?:Overfull |Underfull )/){
+			if($output =~ /\b(?i:error|warning)\b|(?:Overfull |Underfull )/ 
+				|| defined($cont_state)
+			){
 				$color = $self->{'color-def'}{'std_suspicious'};
 			}
 			$self->msg_colored(1, '' . (join "\n$parsed", split /\n/, $output), $color);
@@ -1278,7 +1302,7 @@ sub syntaxCheck{
 			# warnings
 			$msg = $msgs{'ltx_warnings'}; # `grep -iA 1 warning $tmp_ltx_log`;
 			while($log =~ /^
-				(?:Package\s([a-zA-Z0-9_-]+)\s[wW]arning.*(?:\(\1\).*+[\n\r]*)*|
+				(?:(?:Class|Package)\s([a-zA-Z0-9_-]+)\s[wW]arning.*(?:\(\1\).*+[\n\r]*)*|
 				.*(?i:warning).*+[\n\r]*.*)
 			/xmgp){
 				my $package = $1;
@@ -1289,7 +1313,7 @@ sub syntaxCheck{
 					LaTeX\sInfo:\sRedefining\s\\GenericWarning
 				/x;
 				my $w = ${^MATCH};
-				$w =~ s/\n\n(?:Package .*|[\s()]*$)//s;
+				$w =~ s/\n\n(?:(?:Class|Package) .*|[\s()]*$)//s;
 				# maybe warnings continues on next line(s)
 				# space or paranthesis on next line indicate that the warning continues on next line
 				if($log =~ /\G(?:\n\x20.+)+/mgcp){ # and $w =~/^Package subfig Warning:/
