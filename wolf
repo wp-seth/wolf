@@ -109,7 +109,7 @@ $SIG{'TERM'} = \&_cleanup;
 $SIG{'KILL'} = \&_cleanup;
 $SIG{'__DIE__'} = \&_clean;
 
-$main::VERSION = '1.28.4'; # 20171122
+$main::VERSION = '1.28.5'; # 20171123
 
 sub syntaxCheck{
 	my %params = ( # default cli params
@@ -1007,7 +1007,14 @@ sub syntaxCheck{
 				$self->format_std_out([
 					{'type' => 'makeindex', 'cmd' => "makeindex $self->{'tmp_ltx'}",}, 
 				]);
-				$compile_mode{'latex'} = 1;
+				# read log file of makeindex
+				my $idx_state = $self->parse_makeindex_log();
+				if($idx_state ne 'nothing written'){
+					$compile_mode{'latex'} = 1;
+				}else{
+					$self->msg(2, 'no need to re-run pdflatex', 'notice');
+					$compile_mode{'idx'} = 0;
+				}
 			}
 			if($compile_mode{'latex'} or 
 				$self->changed_orig_files($last_change_time_bak, $last_change_time))
@@ -1184,6 +1191,17 @@ sub syntaxCheck{
 		my $self = shift;
 		tie my %hash, 'Tie::IxHash', @_;
 		return \%hash;
+	}
+
+	sub parse_makeindex_log{
+		my $self = shift;
+		my $idx_state = '';
+		my $tmp_idx_log = $self->{'tmp_ltx'} . '.ilg'; # used for error parsing
+		my $log = slurp($tmp_idx_log);
+		if($log =~ /Nothing written in $self->{'tmp_ltx'}\.ind\./){
+			$idx_state = 'nothing written';
+		}
+		return $idx_state;
 	}
 
 	sub parse_tex_log{
